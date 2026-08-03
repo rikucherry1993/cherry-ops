@@ -1,0 +1,1352 @@
+<!DOCTYPE html>
+<!--
+  DevOps Portal — Phase 0 static mockup.
+  Single file, zero external dependencies. All data is fake and lives in the
+  DATA object below. Purpose: settle information architecture + interaction,
+  not final visual style. Use the "Mockup controls" panel (bottom right) to
+  trigger the abnormal states (daemon offline, empty state, reset).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DevOps Portal — mockup</title>
+<style>
+  :root{
+    --bg:#f6f4f8; --panel:#ffffff; --panel2:#f7f4f9; --code:#f8f6f9;
+    --line:#eae5ee; --line2:#d5cede;
+    --ink:#332e3e; --ink2:#6b6478; --ink3:#a29aae;
+    --accent:#cf5f8d; --header:#b84a75;
+    --ok:#3f9950; --warn:#a8761c; --err:#c9485e;
+    --ok-t:rgba(63,153,80,.1); --warn-t:rgba(168,118,28,.1); --err-t:rgba(201,72,94,.08);
+    --sc:#4066b8; /* per-section identity color; overridden on each <section> */
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  a{color:var(--sc);text-decoration:none}
+  a:hover{text-decoration:underline}
+  button{font:inherit;color:inherit;background:none;border:none;padding:0;cursor:pointer}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+  .mono{font-family:var(--mono)}
+  .muted{color:var(--ink2)} .faint{color:var(--ink3)}
+
+  /* ---------- frame ---------- */
+  #banner{display:none;align-items:center;gap:10px;padding:7px 16px;
+          background:var(--err-t);border-bottom:1px solid var(--err);color:var(--ink);font-size:12px}
+  body.offline #banner{display:flex}
+  #banner .dot{background:var(--err)}
+  #app{display:flex;height:100%;min-height:0}
+  body.offline #app{height:calc(100% - 33px)}
+
+  .sidebar{width:210px;min-width:210px;background:var(--panel);border-right:1px solid var(--line);
+           display:flex;flex-direction:column}
+  .brand{padding:14px 16px 10px;border-bottom:1px solid var(--line)}
+  .brand .t{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+            color:var(--header)}
+  .brand .v{font-family:var(--mono);font-size:10px;color:var(--ink3);margin-top:2px}
+  .tabs{flex:1;overflow:auto;padding:8px 0}
+  .tab{display:flex;align-items:center;gap:9px;width:100%;text-align:left;
+       padding:7px 14px;color:var(--ink2);border-left:2px solid transparent}
+  .tab:hover{color:var(--ink);background:var(--panel2)}
+  .tab.on{color:var(--ink);background:var(--panel2);border-left-color:var(--accent)}
+  .tab .sq{width:22px;height:22px;border-radius:6px;background:var(--panel2);border:1px solid var(--line2);
+           display:flex;align-items:center;justify-content:center;
+           font-family:var(--mono);font-size:11px;color:var(--ink2);flex:none}
+  .tab.on .sq{color:var(--accent);border-color:var(--accent)}
+  .tab .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .side-foot{border-top:1px solid var(--line);padding:6px 0}
+  .side-note{padding:8px 16px 10px;font-size:10px;color:var(--ink3);line-height:1.5}
+
+  .main-col{flex:1;display:flex;flex-direction:column;min-width:0}
+  .topbar{height:46px;flex:none;display:flex;align-items:center;justify-content:space-between;
+          gap:12px;padding:0 16px;background:var(--header)}
+  .topbar .l{display:flex;align-items:baseline;gap:10px;min-width:0}
+  .topbar .name{font-size:14px;font-weight:600;white-space:nowrap;color:#fff}
+  .topbar .name.muted{color:rgba(255,255,255,.7)}
+  .topbar .repo{font-family:var(--mono);font-size:11px;color:rgba(255,255,255,.65);
+                white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .topbar .r{display:flex;align-items:center;gap:10px;flex:none}
+  .topbar .btn{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.5);color:#fff}
+  .topbar .btn:hover{background:rgba(255,255,255,.24);border-color:#fff;color:#fff}
+  .topbar .chip,.topbar .chip.ok,.topbar .chip.err{
+    border-color:rgba(255,255,255,.55);color:#fff;background:rgba(255,255,255,.12)}
+
+  .content{flex:1;overflow:auto;padding:16px}
+  .inner{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:13px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:13px;align-items:start}
+  .col{display:flex;flex-direction:column;gap:13px;min-width:0}
+  @media (max-width:1100px){.cols{grid-template-columns:1fr}}
+
+  /* ---------- primitives ---------- */
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+  .dot.ok{background:var(--ok)} .dot.err{background:var(--err)}
+  .dot.warn{background:var(--warn)} .dot.off{background:none;border:1.5px solid var(--ink3)}
+  @media (prefers-reduced-motion:no-preference){
+    .dot.err.blink{animation:blink 1.6s ease-in-out infinite}
+    @keyframes blink{50%{opacity:.35}}
+  }
+  .chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;
+        padding:2px 9px;border-radius:999px;border:1px solid var(--line2);color:var(--ink2);
+        white-space:nowrap}
+  .chip.ok{border-color:var(--ok);color:var(--ok);background:var(--ok-t)}
+  .chip.err{border-color:var(--err);color:var(--err);background:var(--err-t)}
+  .chip.warn{border-color:var(--warn);color:var(--warn);background:var(--warn-t)}
+
+  .btn{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;padding:3px 9px;
+       border:1px solid var(--line2);border-radius:5px;color:var(--ink2);background:var(--panel);
+       white-space:nowrap}
+  .btn:hover{color:var(--ink);border-color:var(--ink3)}
+  .btn.primary{background:var(--ink);border-color:var(--ink);color:#fff;font-weight:600}
+  .btn.primary:hover{filter:brightness(1.08)}
+  body.offline .btn:not(.demo-safe){opacity:.35;pointer-events:none}
+
+  .badge{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;
+         padding:1px 7px;border-radius:4px}
+  .badge.add{color:var(--ok);background:var(--ok-t)}
+  .badge.mod{color:var(--warn);background:var(--warn-t)}
+  .badge.del{color:var(--err);background:var(--err-t)}
+
+  /* ---------- sections ---------- */
+  .section{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+           box-shadow:0 1px 2px rgba(51,46,62,.06)}
+  .sec-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+            padding:8px 14px;background:var(--sc);border-radius:9px 9px 0 0}
+  .sec-title{display:flex;align-items:center;gap:9px;font-size:11px;font-weight:700;
+             letter-spacing:.09em;text-transform:uppercase;color:#fff}
+  .sec-title .tt{white-space:nowrap}
+  .sec-title .sum{color:rgba(255,255,255,.72)}
+  .sec-icon{width:24px;height:24px;border-radius:7px;flex:none;
+            display:flex;align-items:center;justify-content:center;
+            background:rgba(255,255,255,.18);color:#fff}
+  .sec-head a{color:#fff}
+  .sec-head .btn{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.5);color:#fff}
+  .sec-head .btn:hover{background:rgba(255,255,255,.24);border-color:#fff;color:#fff}
+
+  /* drag-to-reorder */
+  .grip{display:flex;align-items:center;padding:2px 3px;margin:-2px 0 -2px -4px;
+        cursor:grab;color:rgba(255,255,255,.55);border-radius:4px}
+  .grip:hover{color:#fff;background:rgba(255,255,255,.14)}
+  .section.dragging{opacity:.4}
+  .section.drop-before{box-shadow:0 -3px 0 0 var(--accent),0 1px 2px rgba(51,46,62,.06)}
+  .section.drop-after{box-shadow:0 3px 0 0 var(--accent),0 1px 2px rgba(51,46,62,.06)}
+  body.dragging-layout .col[data-zone]{outline:2px dashed var(--line2);outline-offset:3px;
+        border-radius:10px;min-height:34px}
+  .cols .rev-grid{grid-template-columns:1fr}
+  .sec-title .sum{font-weight:400;letter-spacing:0;text-transform:none;font-family:var(--mono);
+                  font-size:10.5px;color:var(--ink3)}
+  .sec-tools{display:flex;align-items:center;gap:8px}
+  .deeplink{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11px}
+  .sec-body{padding:11px 14px}
+
+  /* store versions band (what is live on the market right now) */
+  .verband{display:flex}
+  .store{flex:1;min-width:0;padding:11px 16px;border-left:1px solid var(--line);
+         display:flex;flex-direction:column;gap:2px}
+  .store:first-child{border-left:none}
+  .store .eyebrow{display:flex;align-items:center;justify-content:space-between;
+                  font-size:9.5px;font-weight:700;text-transform:uppercase;
+                  letter-spacing:.1em;color:var(--ink3)}
+  .store .ver{display:flex;align-items:center;gap:9px;font-family:var(--mono);
+              font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+  .store .vnote{font-size:11px;color:var(--ink2)}
+  .store .vsub{font-family:var(--mono);font-size:10.5px;color:var(--ink3)}
+
+  /* alerts */
+  .recent-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);
+              margin:8px 0 3px;padding-top:8px;border-top:1px solid var(--line)}
+
+  /* store reviews */
+  .rev-grid{display:grid;grid-template-columns:1fr 1.35fr;gap:20px}
+  @media (max-width:1100px){.rev-grid{grid-template-columns:1fr}}
+  .rating-row{display:flex;align-items:baseline;gap:8px}
+  .rating-row .rv{font-family:var(--mono);font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
+  .stars{color:var(--sc);letter-spacing:.5px}
+  .sent{display:flex;height:6px;border-radius:3px;overflow:hidden;margin:8px 0 4px;background:var(--line)}
+  .sent i{height:100%}
+  .theme-row{display:flex;align-items:center;gap:9px;padding:5px 0;font-size:12px}
+  .theme-row + .theme-row{border-top:1px solid var(--line)}
+  .rrow{padding:7px 0}
+  .rrow + .rrow{border-top:1px solid var(--line)}
+  .rmeta{display:flex;gap:9px;align-items:center;font-family:var(--mono);font-size:10px;color:var(--ink3)}
+  .rtext{font-size:12px;margin-top:3px}
+
+  /* processes */
+  .prow{display:flex;align-items:center;gap:12px;padding:7px 0;border-top:1px solid var(--line)}
+  .prow:first-child{border-top:none}
+  .prow .info{flex:1;min-width:0}
+  .prow .lbl{font-weight:600}
+  .prow .meta{font-family:var(--mono);font-size:10.5px;color:var(--ink3)}
+  .prow .alert{font-size:11px;color:var(--err);margin-top:2px}
+  .prow .st{width:92px;font-family:var(--mono);font-size:10.5px;color:var(--ink2);
+            display:flex;align-items:center;gap:6px;flex:none}
+  .prow .up{width:62px;text-align:right;font-family:var(--mono);font-size:10.5px;color:var(--ink2);flex:none}
+  .prow .acts{display:flex;gap:6px;flex:none}
+  .logbox{background:var(--code);border:1px solid var(--line);border-radius:6px;
+          font-family:var(--mono);font-size:10.5px;line-height:1.7;color:var(--ink2);
+          padding:8px 12px;margin:2px 0 8px 20px;overflow-x:auto;white-space:pre}
+  .logbox .e{color:var(--err)}
+  .chev{transition:transform .12s}
+  .chev.open{transform:rotate(90deg)}
+
+  /* flags */
+  .drow{display:flex;align-items:center;gap:12px;padding:6px 0;border-top:1px solid var(--line)}
+  .drow:first-child{border-top:none}
+  .drow .key{font-family:var(--mono);font-size:12px;min-width:150px}
+  .drow .chg{font-family:var(--mono);font-size:11px;color:var(--ink2);flex:1;
+             overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .flags-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;
+              margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+  .sync-ok{display:flex;align-items:center;gap:9px;color:var(--ink2);padding:4px 0}
+
+  /* pipeline rail (publish flow) */
+  .rail{display:flex;align-items:flex-start;padding:10px 4px 2px}
+  .rnode{display:flex;flex-direction:column;align-items:center;width:112px;flex:none;text-align:center}
+  .rnode .c{width:22px;height:22px;border-radius:50%;border:2px solid var(--line2);
+            display:flex;align-items:center;justify-content:center;
+            font-size:12px;color:var(--ink3);background:var(--panel)}
+  .rnode .rl{font-size:10.5px;color:var(--ink2);margin-top:6px}
+  .rnode .rs{font-family:var(--mono);font-size:10px;color:var(--ink3);margin-top:1px}
+  .rnode.done .c{border-color:var(--ok);color:var(--ok)}
+  .rnode.fail .c{border-color:var(--err);color:var(--err);background:var(--err-t)}
+  .rnode.act .c{border-color:var(--sc);color:var(--sc)}
+  @media (prefers-reduced-motion:no-preference){
+    .rnode.act .c{animation:blink 1.2s ease-in-out infinite}
+  }
+  .rconn{flex:1;height:2px;background:var(--line2);margin-top:11px;min-width:10px}
+  .rconn.done{background:var(--ok)}
+  .pub-end{display:flex;align-items:center;justify-content:space-between;gap:10px;
+           margin-top:12px;padding:8px 12px;border-radius:6px;font-size:12px}
+  .pub-end.okend{background:var(--ok-t);border:1px solid var(--ok)}
+  .pub-end.errend{background:var(--err-t);border:1px solid var(--err)}
+
+  /* cards / grids */
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:9px}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:9px 12px;
+        display:flex;flex-direction:column;gap:3px}
+  .card .cl{font-weight:600;font-size:12.5px}
+  .card .cs{font-family:var(--mono);font-size:10px;color:var(--ink3)}
+  .iframe-slot{margin-top:10px;border:1px dashed var(--line2);border-radius:6px;padding:22px;
+               text-align:center;color:var(--ink3);font-family:var(--mono);font-size:10.5px;line-height:1.8}
+
+  .conns{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-bottom:11px}
+  .conn{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:9px 12px;
+        display:flex;flex-direction:column;gap:6px}
+  .conn .top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+  .conn .nm{font-weight:600;font-size:12.5px}
+  .conn .hint{font-size:10.5px;color:var(--ink3);line-height:1.45}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:9px}
+  .kpi{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:10px 12px}
+  .kpi .kl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)}
+  .kpi .kv{font-family:var(--mono);font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;
+           margin-top:3px}
+  .kpi .kd{font-family:var(--mono);font-size:10px;color:var(--ink2);margin-top:2px}
+  .cache-note{font-family:var(--mono);font-size:10px;color:var(--ink3);margin-top:8px}
+
+  /* release */
+  .wf{border-top:1px solid var(--line);padding:9px 0}
+  .wf:first-child{border-top:none;padding-top:2px}
+  .wf-head{display:flex;align-items:center;gap:10px}
+  .wf-head .id{font-family:var(--mono);font-size:12px}
+  .wf-head .wl{color:var(--ink2);font-size:11.5px;flex:1}
+  .run{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:11px;
+       color:var(--ink2);padding:3px 0 3px 18px}
+  .run .rn{width:44px}
+  .run .rst{width:74px;display:flex;align-items:center;gap:6px}
+  .run .sha{color:var(--ink3);width:70px}
+  .run .dur{width:64px;text-align:right}
+  .run .when{color:var(--ink3)}
+  .phased{margin-top:11px;padding:10px 12px;background:var(--panel2);border:1px solid var(--line);
+          border-radius:6px;display:flex;align-items:center;gap:14px}
+  .phased .seg{display:flex;gap:3px}
+  .phased .seg i{width:16px;height:8px;border-radius:2px;background:var(--line2)}
+  .phased .seg i.f{background:var(--accent)}
+  .phased.paused .seg i.f{background:var(--warn)}
+  .phased .pt{flex:1;font-size:12px}
+  .phased .pt .sub{font-family:var(--mono);font-size:10.5px;color:var(--ink3);margin-top:1px}
+
+  /* settings */
+  .srow{display:flex;align-items:center;gap:12px;padding:7px 0;border-top:1px solid var(--line)}
+  .srow:first-child{border-top:none}
+  .srow .sn{font-family:var(--mono);font-size:12px;min-width:190px}
+  .srow .sp{flex:1;font-size:11.5px;color:var(--ink2)}
+  .note-line{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);
+             font-size:11px;color:var(--ink3);line-height:1.6}
+  .note-line code{font-family:var(--mono);color:var(--ink2)}
+  .mrow .err-msg{font-family:var(--mono);font-size:10.5px;color:var(--err);margin-top:2px}
+  .kv-grid{display:grid;grid-template-columns:130px 1fr;gap:4px 14px;
+           font-size:12px;color:var(--ink2)}
+  .kv-grid dt{color:var(--ink3);text-transform:uppercase;font-size:10px;letter-spacing:.07em;
+              padding-top:2px}
+  .kv-grid dd{margin:0;font-family:var(--mono);font-size:11.5px}
+
+  /* empty state */
+  .empty{margin:60px auto;max-width:520px;text-align:center}
+  .empty h2{font-size:16px;margin:0 0 8px}
+  .empty p{color:var(--ink2);margin:0 0 16px}
+  .empty pre{text-align:left;background:var(--code);border:1px solid var(--line);border-radius:8px;
+             padding:14px 16px;font-family:var(--mono);font-size:11px;line-height:1.7;color:var(--ink2);
+             overflow-x:auto}
+  .empty pre .c{color:var(--ink3)}
+
+  /* modal */
+  .overlay{position:fixed;inset:0;background:rgba(46,40,58,.35);display:none;
+           align-items:center;justify-content:center;z-index:50}
+  .overlay.open{display:flex}
+  .modal{width:460px;max-width:92vw;background:var(--panel);border:1px solid var(--line2);
+         border-radius:10px;padding:16px 18px}
+  .modal h3{margin:0 0 10px;font-size:13.5px}
+  .modal .mb{color:var(--ink2);font-size:12.5px;line-height:1.6}
+  .modal .mb ul{margin:8px 0;padding-left:18px}
+  .modal .mfoot{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+  .modal label{display:flex;align-items:center;gap:7px;margin-top:12px;font-size:11.5px;color:var(--ink3)}
+
+  /* demo panel */
+  .demo{position:fixed;right:14px;bottom:14px;z-index:40;background:var(--panel);
+        border:1px solid var(--line2);border-radius:8px;padding:9px 12px;width:172px;
+        box-shadow:0 2px 8px rgba(51,46,62,.12)}
+  .demo .dt{font-size:9.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+            color:var(--ink3);margin-bottom:6px}
+  .demo label{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink2);
+              padding:3px 0;cursor:pointer}
+  .demo .btn{margin-top:7px;width:100%;justify-content:center}
+  input[type=checkbox]{accent-color:var(--accent)}
+</style>
+</head>
+<body>
+
+<div id="banner" role="alert">
+  <span class="dot err blink"></span>
+  <strong>Daemon unreachable.</strong>
+  <span class="muted">Actions are disabled; showing last known state. Retrying every 5 s —
+  check <span class="mono">portal daemon status</span> on this machine.</span>
+  <button class="btn demo-safe" style="margin-left:auto" onclick="App.retryDaemon()">Retry now</button>
+</div>
+
+<div id="app">
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="t">DevOps Portal</div>
+      <div class="v">v0 &middot; phase-0 mockup</div>
+    </div>
+    <div class="tabs" id="tabs"></div>
+    <div class="side-foot" id="sidefoot"></div>
+    <div class="side-note">Thin shell &mdash; every section deep-links into the tool that owns it.</div>
+  </nav>
+
+  <div class="main-col">
+    <header class="topbar">
+      <div class="l" id="tb-left"></div>
+      <div class="r">
+        <span id="daemon-chip"></span>
+        <button class="btn demo-safe" id="tb-settings" onclick="App.go('settings')" title="Settings">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="2.6"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"/></svg>
+          Settings
+        </button>
+      </div>
+    </header>
+    <main class="content"><div class="inner" id="view"></div></main>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="modal" role="dialog" aria-modal="true" id="modal"></div>
+</div>
+
+<aside class="demo">
+  <div class="dt">Mockup controls</div>
+  <label><input type="checkbox" id="ck-offline" onchange="App.setOffline(this.checked)"> Daemon offline</label>
+  <label><input type="checkbox" id="ck-empty" onchange="App.setEmpty(this.checked)"> No products</label>
+  <button class="btn demo-safe" onclick="App.resetMock()">Reset mock data</button>
+</aside>
+
+<script>
+"use strict";
+const App = (() => {
+
+/* ------------------------------------------------------------------ data */
+
+const DATA = {
+  products: [
+    {
+      id: "lumen", name: "Lumen", repo: "you/lumen",
+      stores: [
+        { store:"App Store", os:"iOS", state:"live", version:"1.0.2",
+          note:"phased release · day 3/7 · 5% of users",
+          sub:"v1.0.3 waiting for review", url:"https://appstoreconnect.apple.com" },
+        { store:"Google Play", os:"Android", state:"none", note:"not published on this store" },
+      ],
+      processes: [
+        { name:"grafana",    label:"Grafana",    port:3000, status:"running", uptime:"2h 14m",
+          log:["logger=http t=21:02:11 msg=\"GET /api/health\" status=200 dur=2ms",
+               "logger=provisioning msg=\"dashboards synced\" count=4",
+               "logger=alerting msg=\"rule group evaluated\" group=process-health ok=3"] },
+        { name:"growthbook", label:"GrowthBook", port:3100, status:"running", uptime:"2h 14m",
+          log:["mongo: connection ok (localhost:27017)",
+               "GET /api/v2/features 200 34ms",
+               "webhook queue idle"] },
+        { name:"minio",      label:"MinIO",      port:9001, status:"stopped", uptime:null,
+          log:["[21:00:41] API: http://127.0.0.1:9000  Console: http://127.0.0.1:9001",
+               "[21:00:52] bucket 'lumen-dev' ready",
+               "[21:01:03] shutdown requested, bye"] },
+      ],
+      flags: {
+        diff: [
+          { kind:"mod", key:"paywall_v2",      chg:"'control' → 'variant_b' @ 20% rollout" },
+          { kind:"add", key:"onboarding_tips", chg:"∅ → {version:2, …}" },
+          { kind:"del", key:"legacy_theme",    chg:"true → ∅" },
+        ],
+        lastSync: "yesterday 18:40 · run #123 · bb31c77",
+      },
+      dashboards: [
+        { label:"Events",          uid:"lm-events" },
+        { label:"API Performance", uid:"lm-api-perf" },
+        { label:"Crash",           uid:"lm-crash" },
+        { label:"Remote Config",   uid:"lm-remote-config" },
+      ],
+      grafanaPort: 3000, gbPort: 3100,
+      integrations: {
+        revenuecat: { status:"connected",      url:"https://app.revenuecat.com" },
+        app_store:  { status:"connected",      url:"https://appstoreconnect.apple.com" },
+        play_store: { status:"not_configured", url:"https://play.google.com/console" },
+      },
+      kpis: [
+        { label:"MRR",             value:"$412", delta:"+8.2% mo" },
+        { label:"Active subs",     value:"117",  delta:"+6 this wk" },
+        { label:"Downloads today", value:"63",   delta:"" },
+        { label:"Trial conv.",     value:"41%",  delta:"30-day" },
+      ],
+      kpiCache: "cached 4 min ago · daemon proxy (charts API limit 25 req/min)",
+      workflows: [
+        { id:"release.yml", label:"Release", runs:[
+          { n:52, status:"success", dur:"6m 12s", sha:"e4b9a01", when:"2d ago" },
+          { n:51, status:"success", dur:"5m 48s", sha:"77d2c3f", when:"6d ago" },
+          { n:50, status:"failed",  dur:"1m 02s", sha:"5a11e9d", when:"8d ago" },
+          { n:49, status:"success", dur:"6m 30s", sha:"0c2b4aa", when:"12d ago" },
+          { n:48, status:"success", dur:"6m 01s", sha:"9f8e7d1", when:"15d ago" },
+        ]},
+        { id:"publish-flags.yml", label:"Publish Flags", runs:[
+          { n:123, status:"success", dur:"58s",    sha:"bb31c77", when:"1d ago" },
+          { n:122, status:"success", dur:"1m 04s", sha:"a92f5e3", when:"3d ago" },
+          { n:121, status:"success", dur:"55s",    sha:"18cd0b2", when:"7d ago" },
+        ]},
+      ],
+      phased: { version:"1.0.2", day:3, of:7, pct:"5%", paused:false },
+      alerts: {
+        configured:true, target:"#lumen-alerts",
+        rules: [
+          { name:"process unhealthy ≥ 5m",                 state:"normal" },
+          { name:"crash-free sessions < 99% (daily, Athena)", state:"normal" },
+          { name:"events pipeline stalled ≥ 30m",          state:"normal" },
+        ],
+        recent: [
+          { when:"3d ago", msg:"minio unhealthy 12m → recovered", level:"warn" },
+        ],
+      },
+      reviews: {
+        configured:true,
+        schedule:"daily 09:00", lastCollected:"today 09:00", analysis:"weekly · Mon",
+        links: [ { label:"App Store", url:"https://appstoreconnect.apple.com" } ],
+        ratings: [ { store:"App Store", value:"4.6", count:41, fresh:5 } ],
+        sentiment: { pos:31, neu:6, neg:4 },
+        themes: [
+          { tone:"pos", label:"sleep insights praised as actionable", n:12, trend:"↑" },
+          { tone:"neu", label:"requests for an Android version",       n:6,  trend:"→" },
+          { tone:"neg", label:"watch sync slow or unreliable",         n:4,  trend:"↑" },
+        ],
+        recent: [
+          { store:"App Store", stars:5, ver:"1.0.2", loc:"ja-JP", when:"2d ago",
+            text:"The wind-down reminders actually work — sleep score up two weeks straight." },
+          { store:"App Store", stars:2, ver:"1.0.1", loc:"en-US", when:"3d ago",
+            text:"Watch sync takes forever on my Series 7. Please optimize." },
+          { store:"App Store", stars:4, ver:"1.0.2", loc:"zh-TW", when:"5d ago",
+            text:"The weekly report is genuinely useful. Waiting for the Android version." },
+        ],
+      },
+    },
+
+    {
+      id: "skylark", name: "Skylark", repo: "you/skylark",
+      stores: [
+        { store:"Google Play", os:"Android", state:"live", version:"2.3.1",
+          note:"staged rollout complete · 100%", url:"https://play.google.com/console" },
+        { store:"App Store", os:"iOS", state:"not_configured",
+          note:"connect asc_key_p8 on the daemon host to read the live version" },
+      ],
+      processes: [
+        { name:"api",      label:"API server", port:8801, status:"unhealthy", uptime:"41m",
+          alert:"health check failing for 6m — GET /healthz → 500 (3 consecutive)",
+          log:["INFO  uvicorn running on 127.0.0.1:8801",
+               "ERROR sightings.db pool exhausted (10/10 in use)",
+               "ERROR GET /healthz 500 in 2.4s",
+               "ERROR GET /healthz 500 in 2.6s"] },
+        { name:"postgres", label:"Postgres",   port:5433, status:"running", uptime:"41m",
+          log:["LOG  database system is ready to accept connections",
+               "LOG  checkpoint complete: wrote 112 buffers"] },
+        { name:"grafana",  label:"Grafana",    port:3301, status:"running", uptime:"41m",
+          log:["logger=http t=20:48:02 msg=\"GET /api/health\" status=200"] },
+      ],
+      flags: {
+        diff: [
+          { kind:"mod", key:"onboarding_v2", chg:"false → true @ 50% rollout" },
+        ],
+        lastSync: "3d ago · run #85 · 91c04d2",
+      },
+      dashboards: [
+        { label:"Events",  uid:"sk-events" },
+        { label:"Revenue", uid:"sk-revenue" },
+      ],
+      grafanaPort: 3301, gbPort: 3100,
+      integrations: {
+        revenuecat: { status:"connected",      url:"https://app.revenuecat.com" },
+        app_store:  { status:"not_configured", url:"https://appstoreconnect.apple.com" },
+        play_store: { status:"connected",      url:"https://play.google.com/console" },
+      },
+      kpis: [
+        { label:"MRR",             value:"$1,284", delta:"+2.1% mo" },
+        { label:"Active subs",     value:"342",    delta:"-3 this wk" },
+        { label:"Downloads today", value:"120",    delta:"" },
+        { label:"Trial conv.",     value:"38%",    delta:"30-day" },
+      ],
+      kpiCache: "cached 11 min ago · daemon proxy",
+      workflows: [
+        { id:"release.yml", label:"Release", runs:[
+          { n:34, status:"success", dur:"8m 20s", sha:"c1d2e3f", when:"5d ago" },
+          { n:33, status:"success", dur:"8m 05s", sha:"4a5b6c7", when:"9d ago" },
+        ]},
+        { id:"publish-flags.yml", label:"Publish Flags", runs:[
+          { n:88, status:"failed",  dur:"41s", sha:"91c04d2", when:"1h ago" },
+          { n:85, status:"success", dur:"52s", sha:"77aa001", when:"3d ago" },
+        ]},
+      ],
+      phased: null,
+      alerts: {
+        configured:true, target:"#skylark-alerts",
+        rules: [
+          { name:"process unhealthy ≥ 5m",                 state:"firing" },
+          { name:"crash-free sessions < 99% (daily, Athena)", state:"normal" },
+        ],
+        recent: [
+          { when:"6m ago", msg:"api unhealthy — /healthz 500 ×3 · pushed to Discord", level:"err" },
+          { when:"2d ago", msg:"nightly Athena scan exceeded $1 budget",              level:"warn" },
+        ],
+      },
+      reviews: {
+        configured:true,
+        schedule:"daily 09:00", lastCollected:"today 09:00", analysis:"weekly · Mon",
+        links: [ { label:"Play Console", url:"https://play.google.com/console" } ],
+        ratings: [ { store:"Google Play", value:"4.1", count:230, fresh:9 } ],
+        gap: "App Store reviews unavailable — asc_key_p8 not configured.",
+        sentiment: { pos:151, neu:48, neg:31 },
+        themes: [
+          { tone:"pos", label:"bird call recognition loved",       n:34, trend:"→" },
+          { tone:"neg", label:"sync errors after latest update",   n:11, trend:"↑" },
+          { tone:"neu", label:"asks for offline map packs",        n:9,  trend:"→" },
+        ],
+        recent: [
+          { store:"Google Play", stars:1, ver:"2.3.1", loc:"en-GB", when:"5h ago",
+            text:"Sightings stopped syncing since the update. Losing my streak data!" },
+          { store:"Google Play", stars:5, ver:"2.3.0", loc:"en-US", when:"1d ago",
+            text:"Identified a rare warbler from the call alone. Magic." },
+        ],
+      },
+    },
+
+    {
+      id: "burrow", name: "Burrow", repo: "you/burrow",
+      stores: [
+        { store:"App Store", os:"iOS", state:"none", note:"pre-release" },
+        { store:"Google Play", os:"Android", state:"none", note:"pre-release" },
+      ],
+      processes: [
+        { name:"grafana",    label:"Grafana",    port:3302, status:"stopped", uptime:null,
+          log:["(no recent output)"] },
+        { name:"growthbook", label:"GrowthBook", port:3102, status:"stopped", uptime:null,
+          log:["(no recent output)"] },
+      ],
+      flags: { diff: [], lastSync: "2w ago · run #12 · 0ddc9a1" },
+      dashboards: [ { label:"Events", uid:"br-events" } ],
+      grafanaPort: 3302, gbPort: 3102,
+      integrations: {
+        revenuecat: { status:"not_configured", url:"https://app.revenuecat.com" },
+        app_store:  { status:"not_configured", url:"https://appstoreconnect.apple.com" },
+        play_store: { status:"not_configured", url:"https://play.google.com/console" },
+      },
+      kpis: [
+        { label:"MRR", value:"—", delta:"" },
+        { label:"Active subs", value:"—", delta:"" },
+        { label:"Downloads today", value:"—", delta:"" },
+        { label:"Trial conv.", value:"—", delta:"" },
+      ],
+      kpiCache: "connect RevenueCat on the daemon host to populate KPIs",
+      workflows: [
+        { id:"release.yml", label:"Release", runs:[] },
+      ],
+      phased: null,
+      alerts: { configured:false, target:null, rules:[], recent:[] },
+      reviews: { configured:false },
+    },
+  ],
+
+  secrets: [
+    { name:"github_token",         use:"Dispatch workflows, read run status",        ok:true  },
+    { name:"growthbook_token",     use:"Read local & cloud feature APIs (diff)",     ok:true  },
+    { name:"revenuecat_secret",    use:"KPI proxy via charts API (cached)",          ok:true  },
+    { name:"asc_key_p8",           use:"App Store Connect API — phased release, metadata", ok:true },
+    { name:"play_service_account", use:"Play Console API",                           ok:false },
+    { name:"discord_webhook",      use:"Alert contact point (Grafana) + test ping",  ok:true  },
+  ],
+  manifests: [
+    { file:"products/lumen.yaml",       ok:true,  sum:"3 processes · 4 dashboards · 2 workflows" },
+    { file:"products/skylark.yaml",     ok:true,  sum:"3 processes · 2 dashboards · 2 workflows" },
+    { file:"products/burrow.yaml",      ok:true,  sum:"2 processes · 1 dashboard · 1 workflow" },
+    { file:"products/driftwood.yaml",   ok:false, sum:"not loaded",
+      err:"local.process_compose_file: ~/dev/driftwood/process-compose.yaml not found" },
+  ],
+};
+
+/* publish flow: diff | running | success | failed | clean  */
+const PUB_INIT = {
+  "lumen":       { stage:"diff" },
+  "skylark":     { stage:"failed", failedAt:2, runNo:88,
+                   error:"Run #88 failed at 'Push to GrowthBook Cloud' — HTTP 429, feature API rate limit (60 req/min). Nothing was partially applied; cloud still matches run #85." },
+  "burrow":      { stage:"clean" },
+};
+const PUB_STEPS = [
+  { label:"Export local flags", sub:"GB → JSON" },
+  { label:"Commit to git",      sub:"flags/ tree" },
+  { label:"CI run",             sub:"" },
+  { label:"Cloud synced",       sub:"GrowthBook" },
+];
+
+const SNAPSHOT = JSON.stringify({ d: DATA, p: PUB_INIT });
+
+/* ------------------------------------------------------------------ state */
+
+let data = JSON.parse(JSON.stringify(DATA));
+let pub  = JSON.parse(JSON.stringify(PUB_INIT));
+const state = { tab:"lumen", offline:false, empty:false, expanded:new Set(), layout:{} };
+let timers = [];
+let modalConfirm = null;
+
+function later(fn, ms){ timers.push(setTimeout(fn, ms)); }
+function clearTimers(){ timers.forEach(clearTimeout); timers = []; }
+function prod(id){ return data.products.find(p => p.id === id); }
+
+/* ------------------------------------------------------------------ svg */
+
+const EXT = '<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2H2.2v7.8H10V7"/><path d="M7 2h3v3"/><path d="M10 2 5.6 6.4"/></svg>';
+const CHEV = c => '<svg class="chev '+(c?'open':'')+'" viewBox="0 0 10 10" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5 7 5 3 8.5"/></svg>';
+const GEAR = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="2.6"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"/></svg>';
+
+/* section identity: one color + one icon per block, so blocks read at a glance */
+const SEC = {
+  stores:  { c:"#5d6889", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><rect x="4.2" y="1.5" width="7.6" height="13" rx="1.6"/><path d="M7 12.4h2"/></svg>' },
+  servers: { c:"#4066b8", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2.5" width="12" height="4.6" rx="1.2"/><rect x="2" y="8.9" width="12" height="4.6" rx="1.2"/><path d="M4.6 4.8h.01M4.6 11.2h.01" stroke-linecap="round" stroke-width="1.8"/></svg>' },
+  flags:   { c:"#6a48b5", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M3.5 14.5v-12h8.2l-2 2.8 2 2.8H3.5"/></svg>' },
+  dash:    { c:"#1f7285", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="5.2" height="5.2" rx="1"/><rect x="8.8" y="2" width="5.2" height="5.2" rx="1"/><rect x="2" y="8.8" width="5.2" height="5.2" rx="1"/><rect x="8.8" y="8.8" width="5.2" height="5.2" rx="1"/></svg>' },
+  release: { c:"#b0522f", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M14.5 1.5 1.5 6.8l4.6 1.9 1.9 5.8 6.5-13z"/><path d="M6.1 8.7l8.4-7.2"/></svg>' },
+  revenue: { c:"#2b7a5d", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.6v6.8M10 6.1c-.4-.7-1.2-1-2-1-1.1 0-2 .6-2 1.5 0 2 4 1 4 2.9 0 .9-.9 1.5-2 1.5-.8 0-1.6-.3-2-1"/></svg>' },
+  alerts:  { c:"#c04361", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.2a3.8 3.8 0 0 0-3.8 3.8c0 2.9-1.4 3.8-1.4 3.8h10.4S11.8 8.9 11.8 6A3.8 3.8 0 0 0 8 2.2z"/><path d="M6.9 12.6a1.2 1.2 0 0 0 2.2 0"/></svg>' },
+  reviews: { c:"#96701c", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M8 1.9l1.9 3.8 4.2.6-3 3 .7 4.2L8 11.5l-3.8 2 .7-4.2-3-3 4.2-.6z"/></svg>' },
+  daemon:  { c:"#5d6889", i:GEAR },
+  secrets: { c:"#96701c", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="5" cy="11" r="3"/><path d="M7.2 8.8 14 2M11.2 3.4l1.8 1.8M9.2 5.4l1.8 1.8"/></svg>' },
+  manifests:{ c:"#1f7285", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M4 1.5h5.5L13 5v9.5H4z"/><path d="M9.5 1.5V5H13"/></svg>' },
+};
+function secWrap(key, extra){
+  return '<section class="section '+(extra||"")+'" data-key="'+key+'" style="--sc:'+SEC[key].c+'">';
+}
+const GRIP = '<svg viewBox="0 0 8 14" width="7" height="12" fill="currentColor"><circle cx="2" cy="2" r="1.1"/><circle cx="6" cy="2" r="1.1"/><circle cx="2" cy="7" r="1.1"/><circle cx="6" cy="7" r="1.1"/><circle cx="2" cy="12" r="1.1"/><circle cx="6" cy="12" r="1.1"/></svg>';
+const DRAGGABLE = new Set(["servers","flags","dash","release","revenue","alerts","reviews"]);
+
+/* ------------------------------------------------------------------ helpers */
+
+const PSTATUS = {
+  running:   { dot:"ok",   label:"running" },
+  stopped:   { dot:"off",  label:"stopped" },
+  unhealthy: { dot:"err blink", label:"unhealthy" },
+  pending:   { dot:"warn", label:"…" },
+};
+
+function procStatus(p){
+  if (state.offline) return '<span class="dot off"></span> unknown';
+  const s = PSTATUS[p.status] || PSTATUS.pending;
+  const label = p.status === "pending" ? (p.pendingLabel || "…") : s.label;
+  return '<span class="dot '+s.dot+'"></span> '+label;
+}
+
+function aggDot(p){
+  if (state.offline) return "off";
+  const st = p.processes.map(x => x.status);
+  if (st.includes("unhealthy")) return "err";
+  if (st.every(x => x === "running")) return "ok";
+  if (st.every(x => x === "stopped")) return "off";
+  return "warn";
+}
+
+function runDot(s){ return s==="success" ? "ok" : s==="failed" ? "err" : "warn"; }
+
+function deeplink(href, text){
+  return '<a class="deeplink" href="'+href+'" target="_blank" rel="noopener">'+text+' '+EXT+'</a>';
+}
+
+function secHead(key, title, sum, tools){
+  const grip = DRAGGABLE.has(key)
+    ? '<span class="grip" title="Drag to reorder" draggable="true" '+
+      'ondragstart="App.dragStart(event,\''+key+'\')" ondragend="App.dragEnd(event)">'+GRIP+'</span>'
+    : "";
+  return '<div class="sec-head"><div class="sec-title">'+grip+
+         '<span class="sec-icon">'+SEC[key].i+'</span><span class="tt">'+title+'</span>'+
+         (sum ? ' <span class="sum">'+sum+'</span>' : '')+'</div>'+
+         '<div class="sec-tools">'+(tools||"")+'</div></div>';
+}
+
+/* ------------------------------------------------------------------ render */
+
+function render(){
+  document.body.classList.toggle("offline", state.offline);
+  renderTabs();
+  renderTopbar();
+  const v = document.getElementById("view");
+  if (state.empty && state.tab !== "settings") v.innerHTML = viewEmpty();
+  else if (state.tab === "settings")           v.innerHTML = viewSettings();
+  else {
+    const p = prod(state.tab);
+    v.innerHTML = p ? viewProduct(p) : viewEmpty();
+  }
+}
+
+function renderTabs(){
+  const el = document.getElementById("tabs");
+  el.innerHTML = state.empty ? '<div class="side-note">No manifests found in <span class="mono">products/</span>.</div>'
+    : data.products.map(p =>
+      '<button class="tab '+(state.tab===p.id?"on":"")+'" onclick="App.go(\''+p.id+'\')">'+
+        '<span class="sq">'+p.name[0]+'</span><span class="nm">'+p.name+'</span>'+
+        '<span class="dot '+aggDot(p)+'"></span></button>'
+    ).join("");
+  document.getElementById("sidefoot").innerHTML =
+    '<button class="tab '+(state.tab==="settings"?"on":"")+'" onclick="App.go(\'settings\')">'+
+      '<span class="sq">'+GEAR+'</span><span class="nm">Settings</span></button>';
+}
+
+function renderTopbar(){
+  const l = document.getElementById("tb-left");
+  if (state.tab === "settings") l.innerHTML = '<span class="name">Settings</span>';
+  else if (state.empty)         l.innerHTML = '<span class="name muted">—</span>';
+  else {
+    const p = prod(state.tab);
+    l.innerHTML = '<span class="name">'+p.name+'</span><span class="repo">'+p.repo+'</span>';
+  }
+  document.getElementById("daemon-chip").innerHTML = state.offline
+    ? '<span class="chip err"><span class="dot err"></span>daemon · unreachable</span>'
+    : '<span class="chip ok"><span class="dot ok"></span>daemon · connected</span>';
+}
+
+/* ---------- product page ---------- */
+
+const SEC_BUILDERS = {
+  servers: (p) => secServers(p), flags: (p) => secFlags(p), dash: (p) => secDashboards(p),
+  release: (p) => secRelease(p), revenue: (p) => secRevenue(p), alerts: (p) => secAlerts(p),
+  reviews: (p) => secReviews(p),
+};
+
+function zoneAttrs(z){
+  return 'data-zone="'+z+'" ondragover="App.dragOver(event,\''+z+'\')" '+
+         'ondragleave="App.dragLeave(event)" ondrop="App.drop(event,\''+z+'\')"';
+}
+
+function viewProduct(p){
+  /* sections live in three drop zones; order is per-product (drag grips to move) */
+  const lay = layoutOf(p.id);
+  const zone = z => lay[z].map(k => SEC_BUILDERS[k](p)).join("");
+  return verBand(p) +
+    '<div class="cols">'+
+      '<div class="col" '+zoneAttrs("left")+'>'+zone("left")+'</div>'+
+      '<div class="col" '+zoneAttrs("right")+'>'+zone("right")+'</div>'+
+    '</div>'+
+    '<div class="col" '+zoneAttrs("bottom")+'>'+zone("bottom")+'</div>';
+}
+
+/* ---------- store versions band ---------- */
+
+function verBand(p){
+  const cells = p.stores.map(s => {
+    let ver = "—", chip = '<span class="chip">not published</span>';
+    if (s.state === "live"){ ver = "v"+s.version; chip = '<span class="chip ok">live</span>'; }
+    else if (s.state === "not_configured"){ chip = '<span class="chip warn">not configured</span>'; }
+    return '<div class="store">'+
+      '<div class="eyebrow"><span>'+s.store+' · '+s.os+'</span>'+
+      (s.url ? '<a href="'+s.url+'" target="_blank" rel="noopener" aria-label="Open '+s.store+'">'+EXT+'</a>' : '')+
+      '</div>'+
+      '<div class="ver">'+ver+' '+chip+'</div>'+
+      (s.note ? '<div class="vnote">'+s.note+'</div>' : '')+
+      (s.sub ? '<div class="vsub">'+s.sub+'</div>' : '')+
+      '</div>';
+  }).join("");
+  return secWrap("stores", "verband")+cells+'</section>';
+}
+
+function secServers(p){
+  const running = p.processes.filter(x => x.status === "running").length;
+  const rows = p.processes.map(x => {
+    const open = state.expanded.has(p.id+"/"+x.name);
+    const acts = [];
+    if (x.status === "running" || x.status === "unhealthy"){
+      acts.push('<button class="btn" onclick="App.proc(\''+p.id+'\',\''+x.name+'\',\'restart\')">Restart</button>');
+      acts.push('<button class="btn" onclick="App.proc(\''+p.id+'\',\''+x.name+'\',\'stop\')">Stop</button>');
+    } else if (x.status === "stopped"){
+      acts.push('<button class="btn" onclick="App.proc(\''+p.id+'\',\''+x.name+'\',\'start\')">Start</button>');
+    }
+    acts.push('<a class="btn" href="http://localhost:'+x.port+'" target="_blank" rel="noopener">Open '+EXT+'</a>');
+    acts.push('<button class="btn" onclick="App.toggleLog(\''+p.id+'\',\''+x.name+'\')">'+CHEV(open)+' Logs</button>');
+    return '<div class="prow">'+
+      '<div class="st">'+procStatus(x)+'</div>'+
+      '<div class="info"><span class="lbl">'+x.label+'</span> '+
+        '<span class="meta">'+x.name+' · :'+x.port+'</span>'+
+        (x.alert && !state.offline ? '<div class="alert">⚠ '+x.alert+'</div>' : "")+
+      '</div>'+
+      '<div class="up">'+(x.uptime && x.status!=="stopped" ? x.uptime : "—")+'</div>'+
+      '<div class="acts">'+acts.join("")+'</div>'+
+    '</div>'+
+    (open ? '<div class="logbox">'+x.log.map(l =>
+        /ERROR|500/.test(l) ? '<span class="e">'+l+'</span>' : l).join("\n")+'</div>' : "");
+  }).join("");
+
+  return secWrap("servers")+
+    secHead("servers", "Local Servers", running+"/"+p.processes.length+" running",
+      '<button class="btn" onclick="App.bulk(\''+p.id+'\',\'start\')">Start all</button>'+
+      '<button class="btn" onclick="App.bulk(\''+p.id+'\',\'stop\')">Stop all</button>'+
+      deeplink("http://localhost:8080", "process-compose"))+
+    '<div class="sec-body">'+rows+'</div></section>';
+}
+
+/* ---------- flags ---------- */
+
+function secFlags(p){
+  const st = pub[p.id];
+  const n = p.flags.diff.length;
+  let body = "";
+
+  if (st.stage === "diff" && n === 0) st.stage = "clean";
+
+  if (st.stage === "diff"){
+    body = p.flags.diff.map(d =>
+      '<div class="drow"><span class="badge '+d.kind+'">'+
+        (d.kind==="add"?"added":d.kind==="mod"?"modified":"removed")+'</span>'+
+        '<span class="key">'+d.key+'</span><span class="chg">'+d.chg+'</span></div>').join("")+
+      '<div class="flags-foot"><span class="mono faint" style="font-size:10.5px">'+
+        n+' change'+(n>1?"s":"")+' vs cloud · last sync '+p.flags.lastSync+'</span>'+
+      '<span style="display:flex;gap:8px">'+
+        '<button class="btn primary" onclick="App.openPublish(\''+p.id+'\')">Publish to cloud…</button>'+
+      '</span></div>';
+  }
+  else if (st.stage === "clean"){
+    body = '<div class="sync-ok"><span class="dot ok"></span>Local and cloud are in sync — nothing to publish.'+
+           '<span class="mono faint" style="font-size:10.5px">last sync '+p.flags.lastSync+'</span></div>';
+  }
+  else {
+    body = rail(st) + railEnd(p, st);
+  }
+
+  return secWrap("flags")+
+    secHead("flags", "Feature Flags", "publish is git-gated: export → commit → CI → cloud",
+      deeplink("http://localhost:"+(p.gbPort||3100), "GrowthBook"))+
+    '<div class="sec-body">'+body+'</div></section>';
+}
+
+function rail(st){
+  const runNo = st.runNo || 124;
+  return '<div class="rail">'+PUB_STEPS.map((s,i) => {
+    let cls = "", mark = String(i+1);
+    if (st.stage === "success" || (st.stage !== "failed" && i < st.step)) { cls = "done"; mark = "✓"; }
+    else if (st.stage === "failed"){
+      if (i < st.failedAt){ cls = "done"; mark = "✓"; }
+      else if (i === st.failedAt){ cls = "fail"; mark = "×"; }
+    }
+    else if (st.stage === "running" && i === st.step){ cls = "act"; }
+    const sub = i === 2
+      ? '<a href="https://github.com/you/product/actions" target="_blank" rel="noopener">run #'+runNo+' '+EXT+'</a>'
+      : (s.sub || "&nbsp;");
+    const conn = i ? '<div class="rconn '+(cls==="done"||(st.stage==="success")?"done":"")+'"></div>' : "";
+    return conn+'<div class="rnode '+cls+'"><div class="c">'+mark+'</div>'+
+           '<div class="rl">'+s.label+'</div><div class="rs">'+sub+'</div></div>';
+  }).join("")+'</div>';
+}
+
+function railEnd(p, st){
+  if (st.stage === "running")
+    return '<div class="mono faint" style="font-size:10.5px;margin-top:10px">publishing… this panel tracks the CI run; safe to leave the page.</div>';
+  if (st.stage === "success")
+    return '<div class="pub-end okend"><span><strong>Published.</strong> Cloud now matches local · commit <span class="mono">ab3f21c</span> · run #'+(st.runNo||124)+'</span>'+
+           '<button class="btn" onclick="App.pubDone(\''+p.id+'\')">Done</button></div>';
+  if (st.stage === "failed")
+    return '<div class="pub-end errend"><span><strong>Publish failed.</strong> '+st.error+'</span>'+
+           '<span style="display:flex;gap:8px;flex:none">'+
+           '<a class="btn" href="https://github.com/you/product/actions" target="_blank" rel="noopener">CI log '+EXT+'</a>'+
+           '<button class="btn primary" onclick="App.startPublish(\''+p.id+'\',false)">Retry</button></span></div>';
+  return "";
+}
+
+/* ---------- dashboards ---------- */
+
+function secDashboards(p){
+  const cards = p.dashboards.map(d =>
+    '<a class="card" href="http://localhost:'+p.grafanaPort+'/d/'+d.uid+'" target="_blank" rel="noopener">'+
+      '<span class="cl">'+d.label+' <span class="faint">'+EXT+'</span></span>'+
+      '<span class="cs">/d/'+d.uid+'</span></a>').join("");
+  return secWrap("dash")+
+    secHead("dash", "Dashboards", p.dashboards.length+" in Grafana",
+      deeplink("http://localhost:"+p.grafanaPort, "Grafana"))+
+    '<div class="sec-body"><div class="cards">'+cards+'</div>'+
+    '<div class="iframe-slot">optional iframe embed slot (one panel max)<br>'+
+    'requires grafana.ini → [security] allow_embedding=true · auth.anonymous for no-login<br>'+
+    'Athena-backed panels: no auto-refresh (OSS has no query cache, $5/TB scanned)</div>'+
+    '</div></section>';
+}
+
+/* ---------- revenue / stores ---------- */
+
+function secRevenue(p){
+  const NAMES = { revenuecat:"RevenueCat", app_store:"App Store Connect", play_store:"Play Console" };
+  const conns = Object.entries(p.integrations).map(([k,c]) => {
+    const ok = c.status === "connected";
+    return '<div class="conn"><div class="top"><span class="nm">'+NAMES[k]+'</span>'+
+      (ok ? '<span class="chip ok">connected</span>' : '<span class="chip">not configured</span>')+'</div>'+
+      (ok ? '<span>'+deeplink(c.url, "Open console")+'</span>'
+          : '<span class="hint">Add credentials on the daemon host — see <a href="#" onclick="App.go(\'settings\');return false">Settings</a>. Keys never enter this UI.</span>')+
+      '</div>';
+  }).join("");
+  const kpis = p.kpis.map(k =>
+    '<div class="kpi"><div class="kl">'+k.label+'</div><div class="kv">'+k.value+'</div>'+
+    '<div class="kd">'+(k.delta||"&nbsp;")+'</div></div>').join("");
+  return secWrap("revenue")+
+    secHead("revenue", "Revenue / Stores", "read-only · charts live in Grafana (Athena)",
+      deeplink("https://app.revenuecat.com", "RevenueCat"))+
+    '<div class="sec-body"><div class="conns">'+conns+'</div>'+
+    '<div class="kpis">'+kpis+'</div>'+
+    '<div class="cache-note">'+p.kpiCache+'</div></div></section>';
+}
+
+/* ---------- release ---------- */
+
+function secRelease(p){
+  const wfs = p.workflows.map(w => {
+    const runs = w.runs.slice(0,5).map(r =>
+      '<div class="run"><span class="rn">#'+r.n+'</span>'+
+      '<span class="rst"><span class="dot '+(r.status==="running"?"warn":runDot(r.status))+'"></span>'+r.status+'</span>'+
+      '<span class="sha">'+r.sha+'</span><span class="dur">'+r.dur+'</span>'+
+      '<span class="when">'+r.when+'</span></div>').join("")
+      || '<div class="run faint">no runs yet</div>';
+    return '<div class="wf"><div class="wf-head">'+
+      '<span class="id">'+w.id+'</span><span class="wl">'+w.label+'</span>'+
+      '<button class="btn" onclick="App.openDispatch(\''+p.id+'\',\''+w.id+'\')">Dispatch…</button>'+
+      '</div>'+runs+'</div>';
+  }).join("");
+
+  let phased = "";
+  if (p.phased){
+    const ph = p.phased;
+    const segs = Array.from({length: ph.of}, (_,i) =>
+      '<i class="'+(i < ph.day ? "f" : "")+'"></i>').join("");
+    phased = '<div class="phased'+(ph.paused?" paused":"")+'">'+
+      '<span class="seg">'+segs+'</span>'+
+      '<span class="pt">iOS phased release — v'+ph.version+
+        (ph.paused ? ' <span class="chip warn">paused</span>' : '')+
+        '<div class="sub">day '+ph.day+' of '+ph.of+' · '+ph.pct+' of users · via ASC API</div></span>'+
+      '<button class="btn" onclick="App.togglePhased(\''+p.id+'\')">'+(ph.paused?"Resume":"Pause")+'</button>'+
+      '</div>';
+  } else {
+    phased = '<div class="cache-note" style="margin-top:10px">no staged rollout in progress</div>';
+  }
+
+  return secWrap("release")+
+    secHead("release", "Release", "workflow_dispatch · last 5 runs",
+      deeplink("https://github.com/"+p.repo+"/actions", "GitHub Actions"))+
+    '<div class="sec-body">'+wfs+phased+'</div></section>';
+}
+
+/* ---------- alerts ---------- */
+
+function secAlerts(p){
+  const a = p.alerts;
+  let body;
+  if (!a.configured){
+    body = '<div class="note-line" style="margin-top:0;padding-top:0;border-top:none">'+
+      'No alert channel yet. Set <code>alerts.channel</code> in <code>products/'+p.id+'.yaml</code> '+
+      'and add a Discord contact point in Grafana — alerts then reach your phone as Discord push.</div>';
+  } else {
+    const rules = a.rules.map(r =>
+      '<div class="srow"><span class="dot '+(r.state==="firing"?"err blink":"ok")+'"></span>'+
+      '<span class="sp" style="flex:1">'+r.name+'</span>'+
+      (r.state==="firing" ? '<span class="chip err">firing</span>'
+                          : '<span class="chip ok">normal</span>')+'</div>').join("");
+    const recent = a.recent.length
+      ? a.recent.map(x =>
+          '<div class="run" style="padding-left:0"><span class="when" style="width:56px">'+x.when+'</span>'+
+          '<span'+(x.level==="err" ? ' style="color:var(--err)"' : '')+'>'+x.msg+'</span></div>').join("")
+      : '<div class="run faint" style="padding-left:0">no alerts in the last 7 days</div>';
+    body =
+      '<div class="srow" style="border-top:none">'+
+        '<span class="chip ok">Discord · '+a.target+'</span>'+
+        '<span class="sp">rules evaluate in Grafana → contact point → push via the Discord mobile app</span>'+
+        '<button class="btn" onclick="App.testPing(\''+p.id+'\')">'+(a.pinged ? "Ping sent ✓" : "Test ping")+'</button>'+
+      '</div>'+
+      rules+
+      '<div class="recent-lbl">Recent alerts</div>'+recent;
+  }
+  return secWrap("alerts")+
+    secHead("alerts", "Alerts", "rules live in Grafana; this panel only reports",
+      deeplink("http://localhost:"+p.grafanaPort+"/alerting", "Grafana alerting"))+
+    '<div class="sec-body">'+body+'</div></section>';
+}
+
+/* ---------- store reviews ---------- */
+
+function secReviews(p){
+  const r = p.reviews;
+  let body, tools = "";
+  if (!r.configured){
+    body = '<div class="note-line" style="margin-top:0;padding-top:0;border-top:none">'+
+      'No store presence yet — the daemon starts collecting reviews automatically once the app '+
+      'is live on a store, using the same credentials as the versions band above.</div>';
+  } else {
+    tools = r.links.map(l => deeplink(l.url, l.label)).join("");
+    const ratings = r.ratings.map(x =>
+      '<div class="rating-row"><span class="rv">'+x.value+'</span><span class="stars">★</span>'+
+      '<span class="muted" style="font-size:11px">'+x.store+' · '+x.count+' total · +'+x.fresh+' this week</span></div>').join("");
+    const s = r.sentiment, tot = s.pos + s.neu + s.neg;
+    const pct = n => (n / tot * 100).toFixed(1);
+    const sent = '<div class="sent">'+
+      '<i style="width:'+pct(s.pos)+'%;background:var(--ok)"></i>'+
+      '<i style="width:'+pct(s.neu)+'%;background:var(--line2)"></i>'+
+      '<i style="width:'+pct(s.neg)+'%;background:var(--err)"></i></div>'+
+      '<div class="mono faint" style="font-size:10px">'+s.pos+' positive · '+s.neu+' neutral · '+s.neg+' negative — this month</div>';
+    const themes = r.themes.map(t =>
+      '<div class="theme-row"><span class="dot '+(t.tone==="pos"?"ok":t.tone==="neg"?"err":"off")+'"></span>'+
+      '<span style="flex:1">'+t.label+'</span>'+
+      '<span class="mono faint">×'+t.n+' '+t.trend+'</span></div>').join("");
+    const collect =
+      '<div class="recent-lbl">Collection</div>'+
+      '<div class="mono faint" style="font-size:10.5px;line-height:1.7">'+
+        'collected '+r.schedule+' by the daemon · last run '+r.lastCollected+'<br>'+
+        'Play reviews API only looks back 7 days — daily collection means nothing is lost'+
+        (r.gap ? '<br><span style="color:var(--warn)">'+r.gap+'</span>' : '')+
+      '</div>'+
+      '<button class="btn" style="margin-top:8px" onclick="App.collectReviews(\''+p.id+'\')">'+
+        (r.busy ? "Collecting…" : "Collect now")+'</button>';
+    const recent = r.recent.map(x =>
+      '<div class="rrow"><div class="rmeta">'+
+      '<span class="stars">'+"★".repeat(x.stars)+'<span class="faint">'+"☆".repeat(5-x.stars)+'</span></span>'+
+      '<span>'+x.store+' · v'+x.ver+' · '+x.loc+' · '+x.when+'</span>'+
+      '<a href="'+r.links[0].url+'" target="_blank" rel="noopener" style="margin-left:auto">Reply '+EXT+'</a>'+
+      '</div><div class="rtext">'+x.text+'</div></div>').join("");
+    body = '<div class="rev-grid"><div>'+
+      ratings + sent +
+      '<div class="recent-lbl">Themes — weekly summary (AI-drafted from the raw reviews)</div>'+themes+collect+
+      '</div><div>'+
+      '<div class="recent-lbl" style="margin-top:0;padding-top:0;border-top:none">Latest reviews</div>'+recent+
+      '</div></div>';
+  }
+  return secWrap("reviews")+
+    secHead("reviews", "Store Reviews", "collected on a schedule · replies happen in the store console", tools)+
+    '<div class="sec-body">'+body+'</div></section>';
+}
+
+/* ---------- settings ---------- */
+
+function viewSettings(){
+  const secrets = data.secrets.map(s =>
+    '<div class="srow"><span class="sn">'+s.name+'</span><span class="sp">'+s.use+'</span>'+
+    (s.ok ? '<span class="chip ok">configured</span>' : '<span class="chip">not configured</span>')+
+    '</div>').join("");
+  const manifests = data.manifests.map(m =>
+    '<div class="srow mrow"><span class="sn">'+m.file+'</span>'+
+    '<span class="sp">'+m.sum+(m.err?'<div class="err-msg">'+m.err+'</div>':"")+'</span>'+
+    (m.ok ? '<span class="chip ok">valid</span>' : '<span class="chip err">invalid</span>')+
+    '</div>').join("");
+
+  const daemonSec = secWrap("daemon")+secHead("daemon","Daemon","","")+
+    '<div class="sec-body"><dl class="kv-grid">'+
+    '<dt>Status</dt><dd>'+(state.offline?'unreachable':'connected · v0.1.0')+'</dd>'+
+    '<dt>Listening</dt><dd>127.0.0.1:8123 (localhost only)</dd>'+
+    '<dt>Manifests</dt><dd>~/dev/devops-portal/products · watching for changes</dd>'+
+    '</dl></div></section>';
+
+  const secretsSec = secWrap("secrets")+
+    secHead("secrets", "Secrets", (data.secrets.filter(s=>s.ok).length)+"/"+data.secrets.length+" configured","")+
+    '<div class="sec-body">'+secrets+
+    '<div class="note-line">Secrets never leave the daemon (OS keychain / encrypted file) and this UI never shows or accepts secret values — it only reports whether each one is set. Add or rotate on the daemon host: <code>portal secret set &lt;name&gt;</code>.</div>'+
+    '</div></section>';
+
+  const manifestsSec = secWrap("manifests")+
+    secHead("manifests", "Product manifests", data.manifests.length+" files","")+
+    '<div class="sec-body">'+manifests+
+    '<div class="note-line">One YAML per product; the UI is fully generic. Adding a product = dropping a new manifest here — zero code changes. Invalid manifests are skipped and reported, never partially loaded.</div>'+
+    '</div></section>';
+
+  return '<div class="cols">'+
+    '<div class="col">'+daemonSec+manifestsSec+'</div>'+
+    '<div class="col">'+secretsSec+'</div></div>';
+}
+
+/* ---------- empty ---------- */
+
+function viewEmpty(){
+  return '<div class="empty"><h2>No products yet</h2>'+
+    '<p>The portal renders one tab per manifest in <span class="mono">products/</span>.<br>'+
+    'Create one and it appears here — no code changes.</p>'+
+    '<pre><span class="c"># products/my-app.yaml</span>\n'+
+    'name: my-app\n'+
+    'display_name: "My App"\n'+
+    'repo: "you/my-app"\n'+
+    'local:\n'+
+    '  process_compose_file: "~/dev/my-app/process-compose.yaml"</pre>'+
+    '<a class="btn" href="#" onclick="return false">Manifest reference '+EXT+'</a></div>';
+}
+
+/* ------------------------------------------------------------------ actions */
+
+function go(tab){ state.tab = tab; render(); }
+
+function toggleLog(pid, name){
+  const k = pid+"/"+name;
+  state.expanded.has(k) ? state.expanded.delete(k) : state.expanded.add(k);
+  render();
+}
+
+function proc(pid, name, action){
+  const x = prod(pid).processes.find(z => z.name === name);
+  x.status = "pending";
+  x.pendingLabel = action === "stop" ? "stopping…" : action === "start" ? "starting…" : "restarting…";
+  render();
+  later(() => {
+    x.status = action === "stop" ? "stopped" : "running";
+    x.uptime = action === "stop" ? null : "just now";
+    delete x.alert;
+    render();
+  }, 900);
+}
+
+function bulk(pid, action){
+  prod(pid).processes.forEach(x => {
+    const idle = x.status === "stopped";
+    if ((action === "start" && idle) || (action === "stop" && !idle)) proc(pid, x.name, action);
+  });
+}
+
+/* publish */
+
+function openPublish(pid){
+  const p = prod(pid), n = p.flags.diff.length;
+  openModal({
+    title: "Publish flags to cloud — "+p.name,
+    body: '<div class="mb">'+n+' change'+(n>1?"s":"")+' will go through the git-gated chain: '+
+      'export → commit → GitHub Actions → GrowthBook Cloud. Every publish is a commit — auditable and revertable.'+
+      '<ul>'+p.flags.diff.map(d=>'<li><span class="mono">'+d.key+'</span> — '+d.chg+'</li>').join("")+'</ul></div>'+
+      '<label><input type="checkbox" id="mock-fail"> mockup: simulate a CI failure</label>',
+    confirm: "Publish",
+    onConfirm(){
+      startPublish(pid, document.getElementById("mock-fail").checked);
+    },
+  });
+}
+
+function startPublish(pid, fail){
+  pub[pid] = { stage:"running", step:0, fail, runNo:(pub[pid].runNo||123)+1 };
+  render();
+  tick(pid);
+}
+
+function tick(pid){
+  const st = pub[pid];
+  if (st.stage !== "running") return;
+  later(() => {
+    if (st.fail && st.step === 2){
+      st.stage = "failed"; st.failedAt = 2;
+      st.error = "Run #"+st.runNo+" failed at 'Push to GrowthBook Cloud' — HTTP 429, feature API rate limit (60 req/min). Nothing was partially applied.";
+    } else if (st.step >= PUB_STEPS.length - 1){
+      st.stage = "success";
+    } else {
+      st.step += 1;
+    }
+    render();
+    tick(pid);
+  }, 1100);
+}
+
+function pubDone(pid){
+  prod(pid).flags.diff = [];
+  prod(pid).flags.lastSync = "just now · run #"+(pub[pid].runNo||124)+" · ab3f21c";
+  pub[pid] = { stage:"clean" };
+  render();
+}
+
+/* release */
+
+function openDispatch(pid, wfId){
+  const p = prod(pid);
+  openModal({
+    title: "Dispatch workflow",
+    body: '<div class="mb">Run <span class="mono">'+wfId+'</span> on '+
+          '<span class="mono">'+p.repo+'@main</span> via workflow_dispatch?</div>',
+    confirm: "Dispatch",
+    onConfirm(){
+      const w = p.workflows.find(z => z.id === wfId);
+      const n = Math.max(0, ...p.workflows.flatMap(z => z.runs.map(r => r.n))) + 1;
+      const run = { n, status:"running", dur:"—", sha:"HEAD", when:"just now" };
+      w.runs.unshift(run);
+      render();
+      later(() => { run.status = "success"; run.dur = "41s"; render(); }, 4000);
+    },
+  });
+}
+
+function togglePhased(pid){
+  const ph = prod(pid).phased;
+  ph.paused = !ph.paused;
+  render();
+}
+
+function testPing(pid){
+  const a = prod(pid).alerts;
+  a.pinged = true;
+  render();
+  later(() => { a.pinged = false; render(); }, 2200);
+}
+
+function collectReviews(pid){
+  const r = prod(pid).reviews;
+  r.busy = true;
+  render();
+  later(() => { r.busy = false; r.lastCollected = "just now"; render(); }, 1400);
+}
+
+/* layout: drag sections between/within the three drop zones; order kept per product */
+
+const DEFAULT_LAYOUT = { left:["servers","flags","dash"], right:["release","revenue","alerts"], bottom:["reviews"] };
+let dragKey = null;
+
+function layoutOf(pid){
+  if (!state.layout[pid]) state.layout[pid] = JSON.parse(JSON.stringify(DEFAULT_LAYOUT));
+  return state.layout[pid];
+}
+
+function dragStart(e, key){
+  dragKey = key;
+  e.dataTransfer.effectAllowed = "move";
+  try { e.dataTransfer.setData("text/plain", key); } catch(_){}
+  const sec = e.target.closest(".section");
+  if (sec){
+    e.dataTransfer.setDragImage(sec, 24, 16);
+    requestAnimationFrame(() => sec.classList.add("dragging"));
+  }
+  document.body.classList.add("dragging-layout");
+}
+
+function clearDragMarks(){
+  document.querySelectorAll(".drop-before,.drop-after").forEach(el =>
+    el.classList.remove("drop-before","drop-after"));
+}
+
+function dragEnd(){
+  document.body.classList.remove("dragging-layout");
+  clearDragMarks();
+  document.querySelectorAll(".section.dragging").forEach(el => el.classList.remove("dragging"));
+  dragKey = null;
+}
+
+function targetIndex(container, y){
+  const kids = [...container.children].filter(el =>
+    el.classList.contains("section") && !el.classList.contains("dragging"));
+  let i = 0;
+  for (const k of kids){
+    const r = k.getBoundingClientRect();
+    if (y > r.top + r.height/2) i++; else break;
+  }
+  return { i, kids };
+}
+
+function dragOver(e){
+  if (!dragKey) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  const { i, kids } = targetIndex(e.currentTarget, e.clientY);
+  clearDragMarks();
+  if (kids[i]) kids[i].classList.add("drop-before");
+  else if (kids.length) kids[kids.length-1].classList.add("drop-after");
+}
+
+function dragLeave(e){
+  if (e.currentTarget.contains(e.relatedTarget)) return;
+  clearDragMarks();
+}
+
+function drop(e, zone){
+  if (!dragKey) return;
+  e.preventDefault();
+  const { i } = targetIndex(e.currentTarget, e.clientY);
+  moveSec(dragKey, zone, i);
+  dragEnd();
+}
+
+/* the real system persists this per product (daemon ui-state); mockup keeps it in memory */
+function moveSec(key, zone, i){
+  const lay = layoutOf(state.tab);
+  ["left","right","bottom"].forEach(z => { lay[z] = lay[z].filter(k => k !== key); });
+  lay[zone].splice(i, 0, key);
+  render();
+}
+
+/* modal */
+
+function openModal({title, body, confirm, onConfirm}){
+  modalConfirm = onConfirm;
+  document.getElementById("modal").innerHTML =
+    '<h3>'+title+'</h3>'+body+
+    '<div class="mfoot"><button class="btn" onclick="App.closeModal()">Cancel</button>'+
+    '<button class="btn primary" onclick="App.confirmModal()">'+confirm+'</button></div>';
+  document.getElementById("overlay").classList.add("open");
+}
+function closeModal(){ document.getElementById("overlay").classList.remove("open"); modalConfirm = null; }
+function confirmModal(){ const f = modalConfirm; closeModal(); if (f) f(); }
+
+/* demo controls */
+
+function setOffline(v){ state.offline = v; render(); }
+function setEmpty(v){ state.empty = v; render(); }
+function retryDaemon(){
+  state.offline = false;
+  document.getElementById("ck-offline").checked = false;
+  render();
+}
+function resetMock(){
+  clearTimers();
+  const s = JSON.parse(SNAPSHOT);
+  data = s.d; pub = s.p;
+  state.tab = "lumen"; state.offline = false; state.empty = false;
+  state.expanded = new Set(); state.layout = {};
+  document.getElementById("ck-offline").checked = false;
+  document.getElementById("ck-empty").checked = false;
+  render();
+}
+
+/* ------------------------------------------------------------------ boot */
+
+document.getElementById("overlay").addEventListener("click", e => {
+  if (e.target.id === "overlay") closeModal();
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
+
+render();
+
+return { go, toggleLog, proc, bulk, openPublish, startPublish, pubDone,
+         openDispatch, togglePhased, testPing, collectReviews, openModal, closeModal,
+         confirmModal, setOffline, setEmpty, retryDaemon, resetMock,
+         dragStart, dragEnd, dragOver, dragLeave, drop, moveSec };
+})();
+</script>
+</body>
+</html>
