@@ -152,6 +152,26 @@ body.dragging-layout .col[data-zone]{outline:2px dashed var(--line2);outline-off
 .chev{transition:transform .12s}
 .chev.open{transform:rotate(90deg)}
 
+/* flags diff + remote config */
+.drow{display:flex;align-items:center;gap:12px;padding:6px 0;border-top:1px solid var(--line)}
+.drow:first-child{border-top:none}
+.drow .key{font-family:var(--mono);font-size:12px;min-width:150px}
+.drow .chg{font-family:var(--mono);font-size:11px;color:var(--ink2);flex:1;
+           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.flags-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;
+            margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.env-head{display:flex;align-items:center;gap:9px;margin-top:12px;padding-top:10px;
+          border-top:1px solid var(--line)}
+.env-head:first-child{margin-top:0;padding-top:0;border-top:none}
+.env-head .sum2{flex:1;font-family:var(--mono);font-size:10.5px;color:var(--ink3)}
+.sync-ok{display:flex;align-items:center;gap:9px;color:var(--ink2);padding:4px 0}
+.pub-end{display:flex;align-items:center;justify-content:space-between;gap:10px;
+         margin-top:12px;padding:8px 12px;border-radius:6px;font-size:12px}
+.pub-end.okend{background:var(--ok-t);border:1px solid var(--ok)}
+.pub-end.errend{background:var(--err-t);border:1px solid var(--err)}
+.rc-input{font-family:var(--mono);font-size:11.5px;border:1px solid var(--line2);
+          border-radius:5px;padding:3px 8px;background:var(--panel);color:var(--ink);width:150px}
+
 /* cards / grids */
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:9px}
 .card{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:9px 12px;

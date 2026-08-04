@@ -14,7 +14,8 @@ let secretsByProduct = {};
 let knownSecrets = [];
 let secretsDir = "";
 let health = null;
-const state = { tab: null, offline: false, layout: {} };
+const state = { tab: null, offline: false, layout: {}, procs: {}, logs: {}, expanded: new Set(),
+                flags: {}, rc: {} };
 let modalConfirm = null;
 let dragKey = null;
 
@@ -49,6 +50,7 @@ async function refresh() {
   if (state.tab !== "settings" && (!state.tab || !prod(state.tab)))
     state.tab = products.length ? products[0].id : null;
   render();
+  primeSections(state.tab);
 }
 
 function prod(id) { return products.find(p => p.id === id); }
@@ -63,6 +65,7 @@ function secretOk(pid, name) {
 /* -------------------------------------------------------------------- svg */
 
 const EXT = '<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2H2.2v7.8H10V7"/><path d="M7 2h3v3"/><path d="M10 2 5.6 6.4"/></svg>';
+const CHEV = c => '<svg class="chev '+(c?'open':'')+'" viewBox="0 0 10 10" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5 7 5 3 8.5"/></svg>';
 const GEAR = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="2.6"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"/></svg>';
 const GRIP = '<svg viewBox="0 0 8 14" width="7" height="12" fill="currentColor"><circle cx="2" cy="2" r="1.1"/><circle cx="6" cy="2" r="1.1"/><circle cx="2" cy="7" r="1.1"/><circle cx="6" cy="7" r="1.1"/><circle cx="2" cy="12" r="1.1"/><circle cx="6" cy="12" r="1.1"/></svg>';
 
@@ -76,13 +79,14 @@ const SEC = {
   revenue: { c:"#2b7a5d", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.6v6.8M10 6.1c-.4-.7-1.2-1-2-1-1.1 0-2 .6-2 1.5 0 2 4 1 4 2.9 0 .9-.9 1.5-2 1.5-.8 0-1.6-.3-2-1"/></svg>' },
   alerts:  { c:"#c04361", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.2a3.8 3.8 0 0 0-3.8 3.8c0 2.9-1.4 3.8-1.4 3.8h10.4S11.8 8.9 11.8 6A3.8 3.8 0 0 0 8 2.2z"/><path d="M6.9 12.6a1.2 1.2 0 0 0 2.2 0"/></svg>' },
   reviews: { c:"#96701c", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M8 1.9l1.9 3.8 4.2.6-3 3 .7 4.2L8 11.5l-3.8 2 .7-4.2-3-3 4.2-.6z"/></svg>' },
+  config:  { c:"#5d6889", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 4.5h6M12.5 4.5H14M2 11.5h2.5M8.5 11.5H14"/><circle cx="10.4" cy="4.5" r="1.9"/><circle cx="6.4" cy="11.5" r="1.9"/></svg>' },
   daemon:  { c:"#5d6889", i:GEAR },
   secrets: { c:"#8d4a70", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="5" cy="11" r="3"/><path d="M7.2 8.8 14 2M11.2 3.4l1.8 1.8M9.2 5.4l1.8 1.8"/></svg>' },
   productsCfg: { c:"#1f7285", i:'<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M4 1.5h5.5L13 5v9.5H4z"/><path d="M9.5 1.5V5H13"/></svg>' },
 };
 
-const DRAGGABLE = new Set(["servers","flags","dash","release","revenue","alerts","reviews","secrets"]);
-const DEFAULT_LAYOUT = { left:["servers","flags","dash"], right:["release","revenue","alerts","secrets"], bottom:["reviews"] };
+const DRAGGABLE = new Set(["servers","flags","config","dash","release","revenue","alerts","reviews","secrets"]);
+const DEFAULT_LAYOUT = { left:["servers","flags","config","dash"], right:["release","revenue","alerts","secrets"], bottom:["reviews"] };
 
 function secWrap(key, extra) {
   return '<section class="section '+(extra||"")+'" data-key="'+key+'" style="--sc:'+SEC[key].c+'">';
@@ -126,11 +130,21 @@ function render() {
   }
 }
 
+function aggDot(p) {
+  const st = state.procs[p.id];
+  if (!st || !st.available) return "off";
+  const s = st.processes.map(x => x.status);
+  if (s.includes("unhealthy")) return "err";
+  if (s.length && s.every(x => x === "running")) return "ok";
+  if (s.every(x => x === "stopped")) return "off";
+  return "warn";
+}
+
 function renderTabs() {
   document.getElementById("tabs").innerHTML = products.map(p =>
     '<button class="tab '+(state.tab===p.id?"on":"")+'" onclick="App.go(\''+p.id+'\')">'+
       '<span class="sq">'+esc(p.name[0]||"?")+'</span><span class="nm">'+esc(p.name)+'</span>'+
-      '<span class="dot off" title="status wiring lands in Phase 2"></span></button>'
+      '<span class="dot '+aggDot(p)+'"></span></button>'
   ).join("");
   document.getElementById("sidefoot").innerHTML =
     '<button class="tab" onclick="App.openEditor(null)">'+
@@ -157,9 +171,9 @@ function renderTopbar() {
 /* ---------- product page ---------- */
 
 const SEC_BUILDERS = {
-  servers: p => secServers(p), flags: p => secFlags(p), dash: p => secDashboards(p),
-  release: p => secRelease(p), revenue: p => secRevenue(p), alerts: p => secAlerts(p),
-  reviews: p => secReviews(p), secrets: p => secSecrets(p),
+  servers: p => secServers(p), flags: p => secFlags(p), config: p => secConfig(p),
+  dash: p => secDashboards(p), release: p => secRelease(p), revenue: p => secRevenue(p),
+  alerts: p => secAlerts(p), reviews: p => secReviews(p), secrets: p => secSecrets(p),
 };
 
 function layoutOf(p) {
@@ -213,41 +227,187 @@ function verBand(p) {
   return secWrap("stores", "verband")+body+'</section>';
 }
 
+function cfgProc(p, name) {
+  return ((p.local && p.local.processes) || []).find(x => x.name === name) || {};
+}
+
 function secServers(p) {
-  const procs = (p.local && p.local.processes) || [];
-  const rows = procs.map(x => {
-    const openUrl = x.url || (x.port ? "http://localhost:"+x.port : null);
-    return '<div class="prow">'+
-      '<div class="st"><span class="dot off"></span> unknown</div>'+
-      '<div class="info"><span class="lbl">'+esc(x.label||x.name)+'</span> '+
-        '<span class="meta">'+esc(x.name)+(x.port?' · :'+x.port:'')+'</span></div>'+
-      '<div class="up">—</div>'+
-      '<div class="acts">'+
-        '<button class="btn" disabled title="'+PH2+'">Start</button>'+
-        '<button class="btn" disabled title="'+PH2+'">Stop</button>'+
-        (openUrl ? '<a class="btn" href="'+openUrl+'" target="_blank" rel="noopener">Open '+EXT+'</a>' : "")+
-        '<button class="btn" disabled title="'+PH2+'">Logs</button>'+
-      '</div></div>';
-  }).join("") || stub("No processes declared. Add them under local.processes in the product config.");
-  const pcFile = p.local && p.local.process_compose_file;
+  const cfgProcs = (p.local && p.local.processes) || [];
+  const hasPC = !!(p.local && p.local.process_compose_file && p.local.process_compose_port);
+  const live = state.procs[p.id];
+  const up = !!(live && live.available);
+  let rows, sum;
+
+  const openBtn = c => {
+    const u = c.url || (c.port ? "http://localhost:"+c.port : null);
+    return u ? '<a class="btn" href="'+u+'" target="_blank" rel="noopener">Open '+EXT+'</a>' : "";
+  };
+
+  if (!hasPC) {
+    sum = cfgProcs.length ? cfgProcs.length+" declared · no process-compose wiring" : "";
+    rows = cfgProcs.map(c =>
+      '<div class="prow"><div class="st"><span class="dot off"></span> unknown</div>'+
+      '<div class="info"><span class="lbl">'+esc(c.label||c.name)+'</span> '+
+      '<span class="meta">'+esc(c.name)+(c.port?' · :'+c.port:'')+'</span></div>'+
+      '<div class="up">—</div><div class="acts">'+openBtn(c)+'</div></div>').join("")
+      || stub("Declare local.processes plus local.process_compose_file and local.process_compose_port in the product config to control your stack from here.");
+    if (cfgProcs.length)
+      rows += '<div class="cache-note">Add local.process_compose_file + local.process_compose_port to enable start/stop and live status.</div>';
+  } else if (!up) {
+    sum = "stack down";
+    rows = cfgProcs.map(c =>
+      '<div class="prow"><div class="st"><span class="dot off"></span> stopped</div>'+
+      '<div class="info"><span class="lbl">'+esc(c.label||c.name)+'</span> '+
+      '<span class="meta">'+esc(c.name)+(c.port?' · :'+c.port:'')+'</span></div>'+
+      '<div class="up">—</div><div class="acts">'+openBtn(c)+'</div></div>').join("");
+    rows += '<div class="cache-note">process-compose is not running for this product — Start all launches the whole stack.</div>';
+  } else {
+    const running = live.processes.filter(x => x.status === "running" || x.status === "unhealthy").length;
+    sum = running+"/"+live.processes.length+" running";
+    rows = live.processes.map(x => {
+      const c = cfgProc(p, x.name);
+      const k = p.id+"/"+x.name;
+      const open = state.expanded.has(k);
+      const dot = x.status === "running" ? "ok" : x.status === "unhealthy" ? "err blink"
+                : x.status === "pending" ? "warn" : "off";
+      const label = x.status === "pending" ? (x.pendingLabel || "…") : x.status;
+      const acts = [];
+      if (x.status === "running" || x.status === "unhealthy") {
+        acts.push('<button class="btn" onclick="App.procAction(\''+p.id+'\',\''+esc(x.name)+'\',\'restart\')">Restart</button>');
+        acts.push('<button class="btn" onclick="App.procAction(\''+p.id+'\',\''+esc(x.name)+'\',\'stop\')">Stop</button>');
+      } else if (x.status === "stopped") {
+        acts.push('<button class="btn" onclick="App.procAction(\''+p.id+'\',\''+esc(x.name)+'\',\'start\')">Start</button>');
+      }
+      acts.push(openBtn(c));
+      acts.push('<button class="btn" onclick="App.toggleLog(\''+p.id+'\',\''+esc(x.name)+'\')">'+CHEV(open)+' Logs</button>');
+      return '<div class="prow">'+
+        '<div class="st"><span class="dot '+dot+'"></span> '+esc(label)+'</div>'+
+        '<div class="info"><span class="lbl">'+esc(c.label||x.name)+'</span> '+
+          '<span class="meta">'+esc(x.name)+(c.port?' · :'+c.port:'')+
+          (x.restarts ? ' · '+x.restarts+' restarts' : '')+'</span>'+
+          (x.status === "unhealthy" ? '<div class="alert">⚠ readiness probe failing ('+esc(x.ready)+')</div>' : "")+
+          (x.status === "stopped" && x.exit_code ? '<div class="alert">exit code '+x.exit_code+'</div>' : "")+
+        '</div>'+
+        '<div class="up">'+(x.status === "stopped" ? "—" : esc(x.uptime || "—"))+'</div>'+
+        '<div class="acts">'+acts.join("")+'</div></div>'+
+        (open ? '<div class="logbox">'+(state.logs[k] || ["(loading…)"]).map(l => {
+          const e = esc(l);
+          return /ERROR|error|500|Traceback/.test(l) ? '<span class="e">'+e+'</span>' : e;
+        }).join("\n")+'</div>' : "");
+    }).join("") || stub("The compose file defines no processes.");
+  }
+
+  const tools = hasPC
+    ? '<button class="btn" onclick="App.startAll(\''+p.id+'\')">Start all</button>'+
+      '<button class="btn" '+(up ? '' : 'disabled ')+'onclick="App.stopAll(\''+p.id+'\')">Stop all</button>'
+    : "";
+
   return secWrap("servers")+
-    secHead("servers", "Local Servers", procs.length ? procs.length+" configured · status arrives in Phase 2" : "",
-      '<button class="btn" disabled title="'+PH2+'">Start all</button>'+
-      '<button class="btn" disabled title="'+PH2+'">Stop all</button>')+
-    '<div class="sec-body">'+rows+
-    (pcFile ? '<div class="cache-note">process-compose file: '+esc(pcFile)+'</div>' : "")+
-    '</div></section>';
+    secHead("servers", "Local Servers", sum, tools)+
+    '<div class="sec-body">'+rows+'</div></section>';
+}
+
+function gbEnvsOf(p) {
+  const gb = p.growthbook || {};
+  if (Array.isArray(gb.environments))
+    return gb.environments.filter(e => e && e.local_payload_url && e.published_payload_url);
+  if (gb.local_payload_url && gb.published_payload_url)
+    return [{ name: "default", local_payload_url: gb.local_payload_url,
+              published_payload_url: gb.published_payload_url, publish_command: gb.publish_command }];
+  return [];
+}
+
+function envChip(name) {
+  return '<span class="chip '+(name === "prod" ? "warn" : "")+'">'+esc(name)+'</span>';
 }
 
 function secFlags(p) {
-  const gb = p.growthbook && p.growthbook.local_url;
+  const gb = p.growthbook || {};
+  const st = state.flags[p.id];
+  let body;
+  if (!gbEnvsOf(p).length) {
+    body = stub("Declare growthbook.environments (each with local_payload_url, published_payload_url, publish_command) in the product config to diff local flags against what is live, per environment.");
+  } else if (!st) {
+    body = stub("loading diff…");
+  } else if (!st.available) {
+    body = stub("Diff unavailable ("+esc(st.error || st.reason)+")")+
+      '<button class="btn" onclick="App.loadFlags(\''+p.id+'\')">Retry</button>';
+  } else {
+    body = (st.environments || []).map(env => {
+      const head = (extra) =>
+        '<div class="env-head">'+envChip(env.name)+'<span class="sum2">'+extra+'</span>';
+      if (env.publishing)
+        return head("publishing… running your publish command")+'</div>';
+      if (!env.available)
+        return head("diff unavailable — "+esc(env.error || ""))+
+          '<button class="btn" onclick="App.loadFlags(\''+p.id+'\')">Retry</button></div>';
+      const rows = [["add", env.added], ["mod", env.modified], ["del", env.removed]].flatMap(([kind, list]) =>
+        (list || []).map(d =>
+          '<div class="drow"><span class="badge '+kind+'">'+
+          (kind === "add" ? "added" : kind === "mod" ? "modified" : "removed")+'</span>'+
+          '<span class="key">'+esc(d.key)+'</span><span class="chg">'+esc(d.chg)+'</span></div>'));
+      const result = env.result
+        ? (env.result.synced
+          ? '<div class="pub-end okend"><span><strong>Published.</strong> Local and live payloads for '+esc(env.name)+' now match.</span></div>'
+          : '<div class="pub-end errend"><span><strong>'+(env.result.ok ? "Published, but payloads still differ (CDN propagation?)." : "Publish failed.")+'</strong>'+
+            (env.result.output ? ' <span class="mono" style="font-size:10.5px">'+esc(env.result.output.slice(-200))+'</span>' : "")+'</span></div>')
+        : "";
+      if (!rows.length)
+        return head("in sync"+(env.dateUpdated ? " · published "+esc(env.dateUpdated) : ""))+
+          '<span class="dot ok"></span></div>'+result;
+      return head(rows.length+" change"+(rows.length > 1 ? "s" : "")+" vs published")+
+        (env.canPublish
+          ? '<button class="btn primary" onclick="App.openFlagsPublish(\''+p.id+'\',\''+esc(env.name)+'\')">Publish '+esc(env.name)+'…</button>'
+          : '<span class="chip">no publish_command</span>')+
+        '</div>'+rows.join("")+result;
+    }).join("")+
+    '<div class="flags-foot"><span class="mono faint" style="font-size:10.5px">each environment publishes separately — the confirm dialog names the target</span>'+
+    '<button class="btn" onclick="App.loadFlags(\''+p.id+'\')">Refresh</button></div>';
+  }
   return secWrap("flags")+
-    secHead("flags", "Feature Flags", "publish is git-gated: export → commit → CI → cloud",
-      gb ? deeplink(gb, "GrowthBook") : "")+
-    '<div class="sec-body">'+
-    (gb ? stub("Local vs cloud diff and the publish flow land in Phase 3.")
-        : stub("Set growthbook.local_url in the product config to link your local GrowthBook."))+
-    '</div></section>';
+    secHead("flags", "Feature Flags", "local payload vs live payload, per environment",
+      gb.local_url ? deeplink(gb.local_url, "GrowthBook") : "")+
+    '<div class="sec-body">'+body+'</div></section>';
+}
+
+function secConfig(p) {
+  const rc = p.remote_config;
+  const st = state.rc[p.id];
+  let body;
+  if (!rc || !rc.url) {
+    body = stub("Declare remote_config { url, fields, publish_command } in the product config to edit your app's remote config (e.g. force-update versions) from here.");
+  } else if (!st) {
+    body = stub("loading current values…");
+  } else if (st.publishing) {
+    body = stub("publishing… running your publish command");
+  } else if (!st.available) {
+    body = stub("Could not read "+esc(rc.url)+" ("+esc(st.error || st.reason)+")")+
+      '<button class="btn" onclick="App.loadRC(\''+p.id+'\')">Retry</button>';
+  } else {
+    const rows = (st.fields || []).map(f =>
+      '<div class="srow"><span class="sn" style="min-width:150px">'+esc(f.label || f.key)+'</span>'+
+      '<span class="sp mono" style="font-size:10.5px">'+esc(f.key)+'</span>'+
+      '<input class="rc-input" id="rc-'+esc(p.id)+'-'+esc(f.key)+'" value="'+
+        esc(typeof st.doc[f.key] === "string" ? st.doc[f.key] : JSON.stringify(st.doc[f.key] ?? ""))+'">'+
+      '</div>').join("") || stub("No fields declared — remote_config.fields is empty.");
+    const result = st.result
+      ? (st.result.synced
+        ? '<div class="pub-end okend"><span><strong>Published.</strong> Live JSON matches your edit.</span></div>'
+        : '<div class="pub-end errend"><span><strong>'+(st.result.ok ? "Published — live JSON not updated yet (CDN propagation)." : "Publish failed.")+'</strong>'+
+          (st.result.output ? ' <span class="mono" style="font-size:10.5px">'+esc(st.result.output.slice(-200))+'</span>' : "")+'</span></div>')
+      : "";
+    body = rows+
+      '<div class="flags-foot"><span class="mono faint" style="font-size:10.5px">undeclared keys in the live JSON pass through untouched</span>'+
+      '<span style="display:flex;gap:8px">'+
+      '<button class="btn" onclick="App.loadRC(\''+p.id+'\')">Reload</button>'+
+      (st.canPublish ? '<button class="btn primary" onclick="App.openRCPublish(\''+p.id+'\')">Publish…</button>'
+                     : '<span class="chip">set remote_config.publish_command to publish</span>')+
+      '</span></div>'+result;
+  }
+  return secWrap("config")+
+    secHead("config", (rc && rc.title) || "Force Update Control", "edit → publish via your own command",
+      rc && rc.url ? deeplink(rc.url, "Live JSON") : "")+
+    '<div class="sec-body">'+body+'</div></section>';
 }
 
 function secDashboards(p) {
@@ -396,12 +556,33 @@ const TEMPLATE = {
   repo: "user/my-app",
   local: {
     process_compose_file: "~/dev/my-app/process-compose.yaml",
+    process_compose_port: 28080,
     processes: [
       { name: "grafana", label: "Grafana", port: 3000 },
       { name: "growthbook", label: "GrowthBook", port: 3100 },
     ],
   },
-  growthbook: { local_url: "http://localhost:3100" },
+  growthbook: {
+    local_url: "http://localhost:3100",
+    environments: [
+      { name: "prod",
+        local_payload_url: "http://localhost:3100/api/features/sdk-PRODKEY",
+        published_payload_url: "https://example.com/api/features/my-app",
+        publish_command: "cd ~/dev/my-app && ./publish-flags.sh" },
+      { name: "dev",
+        local_payload_url: "http://localhost:3100/api/features/sdk-DEVKEY",
+        published_payload_url: "https://example.com/api/features/my-app-dev",
+        publish_command: "cd ~/dev/my-app && ./publish-flags.sh --env dev" },
+    ],
+  },
+  remote_config: {
+    url: "https://example.com/app-config.json",
+    fields: [
+      { key: "min_supported_version", label: "Min supported version" },
+      { key: "latest_version", label: "Latest version" },
+    ],
+    publish_command: "aws s3 cp {file} s3://my-bucket/app-config.json --content-type application/json",
+  },
   grafana: {
     base_url: "http://localhost:3000",
     dashboards: [ { uid: "events", label: "Events" } ],
@@ -411,7 +592,9 @@ const TEMPLATE = {
   alerts: { channel: "discord" },
 };
 
-function openEditor(id) {
+async function openEditor(id) {
+  /* re-fetch first so the editor never opens on a stale copy (lost-update guard) */
+  try { await refresh(); } catch (_) {}
   const existing = id ? prod(id) : null;
   const value = JSON.stringify(existing || TEMPLATE, null, 2);
   document.getElementById("modal").className = "modal wide";
@@ -442,6 +625,8 @@ async function saveProduct(origId) {
   }
   closeModal();
   state.tab = origId || body.id;
+  delete state.flags[state.tab];
+  delete state.rc[state.tab];
   await refresh();
 }
 
@@ -493,6 +678,172 @@ function confirmDelete(id) {
       try { await api("/api/products/"+id, { method:"DELETE" }); } catch (_) {}
       if (state.tab === id) state.tab = null;
       await refresh();
+    },
+  });
+}
+
+/* ------------------------------------------------------- local servers */
+
+function userIsTyping() {
+  const el = document.activeElement;
+  return !!(el && /^(INPUT|TEXTAREA)$/.test(el.tagName));
+}
+
+async function pollProcs() {
+  if (dragKey || userIsTyping()) return;
+  let changed = false;
+  const targets = products.filter(p => p.local && p.local.process_compose_port && p.local.process_compose_file);
+  await Promise.all(targets.map(async p => {
+    try {
+      const r = await api("/api/products/"+p.id+"/processes");
+      if (JSON.stringify(state.procs[p.id]) !== JSON.stringify(r)) { state.procs[p.id] = r; changed = true; }
+    } catch (_) {}
+  }));
+  await Promise.all([...state.expanded].map(async k => {
+    const i = k.indexOf("/");
+    const pid = k.slice(0, i), name = k.slice(i + 1);
+    try {
+      const r = await api("/api/products/"+pid+"/processes/"+encodeURIComponent(name)+"/logs?tail=100");
+      if (JSON.stringify(state.logs[k]) !== JSON.stringify(r.logs)) { state.logs[k] = r.logs; changed = true; }
+    } catch (_) {}
+  }));
+  if (changed && !dragKey) render();
+}
+
+async function procAction(pid, name, action) {
+  const st = state.procs[pid];
+  const proc = st && st.processes && st.processes.find(x => x.name === name);
+  if (proc) { proc.status = "pending"; proc.pendingLabel = action + "…"; render(); }
+  try { await api("/api/products/"+pid+"/processes/"+encodeURIComponent(name)+"/"+action, { method: "POST" }); }
+  catch (_) {}
+  setTimeout(pollProcs, 700);
+}
+
+async function startAll(pid) {
+  const st = state.procs[pid];
+  if (!st || !st.available) {
+    state.procs[pid] = { available: false, reason: "launching" };
+    render();
+    try { await api("/api/products/"+pid+"/processes/up", { method: "POST" }); }
+    catch (e) {
+      openModal({ title: "Could not launch process-compose",
+        body: '<div class="mb">'+esc(e.message)+'</div>', confirm: "OK", onConfirm: null });
+    }
+    setTimeout(pollProcs, 800);
+    return;
+  }
+  for (const x of st.processes.filter(x => x.status === "stopped")) procAction(pid, x.name, "start");
+}
+
+function stopAll(pid) {
+  openModal({
+    title: "Stop the whole stack",
+    body: '<div class="mb">Stop every process and shut down this product\'s process-compose instance?</div>',
+    confirm: "Stop all",
+    onConfirm: async () => {
+      try { await api("/api/products/"+pid+"/processes/down", { method: "POST" }); } catch (_) {}
+      state.procs[pid] = { available: false, reason: "down" };
+      render();
+      setTimeout(pollProcs, 1000);
+    },
+  });
+}
+
+async function toggleLog(pid, name) {
+  const k = pid+"/"+name;
+  if (state.expanded.has(k)) { state.expanded.delete(k); render(); return; }
+  state.expanded.add(k);
+  render();
+  try {
+    const r = await api("/api/products/"+pid+"/processes/"+encodeURIComponent(name)+"/logs?tail=100");
+    state.logs[k] = r.logs.length ? r.logs : ["(no recent output)"];
+  } catch (_) { state.logs[k] = ["(logs unavailable)"]; }
+  render();
+}
+
+/* ------------------------------------------- flags diff + remote config */
+
+async function loadFlags(pid) {
+  try { state.flags[pid] = await api("/api/products/"+pid+"/flags/diff"); }
+  catch (e) { state.flags[pid] = { available: false, reason: "error", error: e.message }; }
+  render();
+}
+
+async function loadRC(pid) {
+  try { state.rc[pid] = await api("/api/products/"+pid+"/remote-config"); }
+  catch (e) { state.rc[pid] = { available: false, reason: "error", error: e.message }; }
+  render();
+}
+
+function primeSections(tab) {
+  const p = prod(tab);
+  if (!p) return;
+  if (gbEnvsOf(p).length && !state.flags[p.id]) loadFlags(p.id);
+  if (p.remote_config && p.remote_config.url && !state.rc[p.id]) loadRC(p.id);
+}
+
+function openFlagsPublish(pid, envName) {
+  const p = prod(pid), st = state.flags[pid];
+  const env = (st.environments || []).find(e => e.name === envName);
+  const cfg = gbEnvsOf(p).find(e => (e.name || "default") === envName);
+  if (!env || !cfg) return;
+  const n = (env.added||[]).length + (env.modified||[]).length + (env.removed||[]).length;
+  openModal({
+    title: "Publish flags — "+esc(p.name),
+    body: '<div class="mb">Target environment: '+envChip(envName)+
+      '<div style="margin-top:6px">'+n+' change'+(n>1?"s":"")+' will go live by running:</div></div>'+
+      '<div class="logbox" style="margin:8px 0 0">'+esc(cfg.publish_command)+'</div>',
+    confirm: "Publish "+esc(envName),
+    onConfirm: async () => {
+      env.publishing = true; render();
+      let result;
+      try {
+        result = await api("/api/products/"+pid+"/flags/publish",
+          { method: "POST", body: JSON.stringify({ env: envName }) });
+      } catch (e) {
+        result = { ok: false, synced: false, output: e.message };
+      }
+      env.publishing = false;
+      if (result.diff) Object.assign(env, result.diff);
+      env.result = result;
+      render();
+    },
+  });
+}
+
+function openRCPublish(pid) {
+  const p = prod(pid), st = state.rc[pid];
+  const values = {}, changes = [];
+  for (const f of st.fields || []) {
+    const el = document.getElementById("rc-"+pid+"-"+f.key);
+    if (!el) continue;
+    const raw = el.value;
+    let v = raw;
+    if (typeof st.doc[f.key] !== "string") { try { v = JSON.parse(raw); } catch (_) {} }
+    if (JSON.stringify(v) !== JSON.stringify(st.doc[f.key])) {
+      values[f.key] = v;
+      changes.push(esc(f.key)+": "+esc(JSON.stringify(st.doc[f.key]))+" → "+esc(JSON.stringify(v)));
+    }
+  }
+  if (!changes.length) {
+    openModal({ title: "Nothing to publish", body: '<div class="mb">No field differs from the live JSON.</div>',
+                confirm: "OK", onConfirm: null });
+    return;
+  }
+  openModal({
+    title: "Publish remote config — "+esc(p.name),
+    body: '<div class="mb">'+changes.map(c => '<div class="mono" style="font-size:11.5px">'+c+'</div>').join("")+
+      '<div style="margin-top:8px">via your publish command:</div></div>'+
+      '<div class="logbox" style="margin:8px 0 0">'+esc(p.remote_config.publish_command)+'</div>',
+    confirm: "Publish",
+    onConfirm: async () => {
+      st.publishing = true; render();
+      let result;
+      try { result = await api("/api/products/"+pid+"/remote-config", { method: "POST", body: JSON.stringify({ values }) }); }
+      catch (e) { result = { ok: false, synced: false, output: e.message }; }
+      await loadRC(pid);
+      if (state.rc[pid]) state.rc[pid].result = result;
+      render();
     },
   });
 }
@@ -585,14 +936,15 @@ function confirmModal() { const f = modalConfirm; closeModal(); if (f) f(); }
 
 /* ------------------------------------------------------------------- boot */
 
-function go(tab) { state.tab = tab; render(); }
+function go(tab) { state.tab = tab; render(); primeSections(tab); }
 
 document.getElementById("overlay").addEventListener("click", e => {
   if (e.target.id === "overlay") closeModal();
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
 
-refresh();
+refresh().then(pollProcs);
+setInterval(pollProcs, 4000);
 setInterval(async () => {
   try {
     await api("/api/health");
@@ -603,6 +955,7 @@ setInterval(async () => {
 }, 5000);
 
 return { go, openEditor, saveProduct, confirmDelete, openSecret, saveSecret,
-         openModal, closeModal, confirmModal,
+         openModal, closeModal, confirmModal, procAction, startAll, stopAll, toggleLog,
+         loadFlags, loadRC, openFlagsPublish, openRCPublish,
          dragStart, dragEnd, dragOver, dragLeave, drop, moveSec, refresh };
 })();

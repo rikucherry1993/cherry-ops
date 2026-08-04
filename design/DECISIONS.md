@@ -102,6 +102,29 @@ acceptable for a localhost-only daemon). The product config will declare the
 published payload URL per product so other setups (including a real GB Cloud)
 can plug in the same way.
 
+## Generalization principles (added 2026-08-04, binding — the path to a public product)
+
+1. Everything product-specific is manifest data; the portal core never names
+   a product, vendor bucket, or pipeline.
+2. Vendor-specific READS are public URLs / standard APIs declared in the
+   manifest; vendor-specific WRITES run a user-supplied `publish_command`
+   (daemon-side, user's own shell environment and credentials) — the portal
+   guarantees the pattern (read → diff → confirm → execute → verify), never
+   the vendor. Commands in the manifest are the same trust level as
+   process-compose commands: localhost, single user.
+3. Common setups may ship as optional presets that pre-fill command
+   templates; never hardcoded into the core.
+
+Applied in Phase 3: the Feature Flags section diffs two declared payload URLs
+(local vs published) and publishes via `growthbook.publish_command`; the
+Remote Config section edits declared fields of a public JSON document
+(undeclared keys pass through untouched, optional per-field regex `pattern`)
+and publishes via `remote_config.publish_command`. This supersedes HANDOFF #2's
+GitHub-Actions-specific chain: git gating lives inside the user's own publish
+pipeline; the portal owns diff/confirm/execute/verify. The standalone local
+flags-editor process becomes redundant once its product uses the Remote Config
+section.
+
 ## Phase plan impact
 
 - Reviews collection + analysis and alert test-ping are new daemon

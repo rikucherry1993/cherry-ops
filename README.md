@@ -40,6 +40,13 @@ node daemon/server.js
 Then open http://127.0.0.1:8123 — you'll get the empty state; add your first
 product from there. The daemon binds to localhost only.
 
+Local process control additionally needs [process-compose](https://github.com/F1bonacc1/process-compose)
+(`brew install f1bonacc1/tap/process-compose`): write one `process-compose.yaml`
+per product (foreground commands + readiness probes), point the product config
+at it (`local.process_compose_file` + `local.process_compose_port`), and the
+portal launches, monitors and stops the whole stack — one process-compose
+instance per product, proxied by the daemon, never managed by hand.
+
 ## Product config (v1)
 
 Declare only what the product has; every section renders from this config and
@@ -53,9 +60,27 @@ template:
   "repo": "user/my-app",
   "local": {
     "process_compose_file": "~/dev/my-app/process-compose.yaml",
+    "process_compose_port": 28080,
     "processes": [ { "name": "grafana", "label": "Grafana", "port": 3000 } ]
   },
-  "growthbook": { "local_url": "http://localhost:3100" },
+  "growthbook": {
+    "local_url": "http://localhost:3100",
+    "environments": [
+      { "name": "prod",
+        "local_payload_url": "http://localhost:3100/api/features/sdk-PRODKEY",
+        "published_payload_url": "https://example.com/api/features/my-app",
+        "publish_command": "cd ~/dev/my-app && ./publish-flags.sh" },
+      { "name": "dev",
+        "local_payload_url": "http://localhost:3100/api/features/sdk-DEVKEY",
+        "published_payload_url": "https://example.com/api/features/my-app-dev",
+        "publish_command": "cd ~/dev/my-app && ./publish-flags.sh --env dev" }
+    ]
+  },
+  "remote_config": {
+    "url": "https://example.com/app-config.json",
+    "fields": [ { "key": "min_supported_version", "label": "Min supported", "pattern": "\\d+(\\.\\d+)*" } ],
+    "publish_command": "aws s3 cp {file} s3://my-bucket/app-config.json --content-type application/json"
+  },
   "grafana": { "base_url": "http://localhost:3000",
                "dashboards": [ { "uid": "events", "label": "Events" } ] },
   "release": { "workflows": [ { "id": "release.yml", "label": "Release" } ] },
@@ -70,8 +95,8 @@ template:
 |---|---|---|
 | 0 | Clickable design mockup (`design/mockup.html`) + decisions | done |
 | 1 | Daemon skeleton, GUI-configured products, generic rendering, stubs | done |
-| 2 | process-compose wiring: live status, start/stop, logs | next |
-| 3 | GrowthBook diff + git-gated publish chain | planned |
-| 4 | GitHub runs, store versions/KPIs/reviews, alert wiring | planned |
+| 2 | process-compose wiring: live status, start/stop, logs | done |
+| 3 | Flags diff/publish + remote-config editor (bring-your-own publish command) | done |
+| 4 | GitHub runs, store versions/KPIs/reviews, alert wiring | next |
 
 Design rationale and the full decision record live in `design/DECISIONS.md`.
