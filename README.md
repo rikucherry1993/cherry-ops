@@ -103,6 +103,7 @@ template:
 | 2 | process-compose wiring: live status, start/stop, logs | done |
 | 3 | Flags diff/publish + remote-config editor (bring-your-own publish command) | done |
 | 4 | Live store versions (ASC), RevenueCat KPIs, recent reviews, GitHub runs/dispatch, alert rules + test ping | done |
-| 5 | Play integration, scheduled review archiving + AI theme summaries, recent-alert feed | planned |
+| 5 | Scheduled review archiving, AI theme summaries via `reviews.analyze_command`, recent-alert feed | done |
+| 6 | Play Store integration (versions + reviews) | when an Android product exists to verify against |
 
 Design rationale and the full decision record live in `design/DECISIONS.md`.

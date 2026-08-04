@@ -34,8 +34,11 @@ const KNOWN_SECRETS = [
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
+const REVIEWS_DIR = path.join(HOME, "reviews");
+
 fs.mkdirSync(PRODUCTS_DIR, { recursive: true });
 fs.mkdirSync(SECRETS_DIR, { recursive: true, mode: 0o700 });
+fs.mkdirSync(REVIEWS_DIR, { recursive: true });
 
 /* ------------------------------------------------------------ product store */
 
@@ -94,6 +97,8 @@ function validateProduct(p) {
     if (rc.publish_command != null && typeof rc.publish_command !== "string")
       errors.push("remote_config.publish_command: must be a string");
   }
+  if (p.reviews != null && p.reviews.analyze_command != null && typeof p.reviews.analyze_command !== "string")
+    errors.push("reviews.analyze_command: must be a string");
   const dashes = p.grafana && p.grafana.dashboards;
   if (dashes != null) {
     if (!Array.isArray(dashes)) errors.push("grafana.dashboards: must be an array");
@@ -284,9 +289,93 @@ async function ascReviews(pid, prodCfg) {
     }));
     const avg = recent.length
       ? (recent.reduce((s, r) => s + r.rating, 0) / recent.length).toFixed(1) : null;
-    return { app_store: { recent, avgRecent: avg, count: recent.length } };
+    return { app_store: { recent, avgRecent: avg, count: recent.length },
+             archive: readJsonFile(reviewsStateFile(pid), null),
+             analysis: readJsonFile(analysisFile(pid), null),
+             canAnalyze: !!(prodCfg.reviews && prodCfg.reviews.analyze_command) };
   } catch (e) { return { error: String(e.message || e) }; }
 }
+
+/* ---- scheduled review archiving + user-command analysis ---- */
+
+function reviewsFile(pid) { return path.join(REVIEWS_DIR, pid + ".jsonl"); }
+function reviewsStateFile(pid) { return path.join(REVIEWS_DIR, pid + ".state.json"); }
+function analysisFile(pid) { return path.join(REVIEWS_DIR, pid + "-analysis.json"); }
+function readJsonFile(f, dflt) { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return dflt; } }
+
+async function collectReviews(pid, prodCfg) {
+  const as = (prodCfg.integrations || {}).app_store;
+  if (!as || !as.app_id) return { error: "app_store integration not configured" };
+  const rv = await ascFetch(pid, as, "/v1/apps/" + as.app_id + "/customerReviews?sort=-createdDate&limit=200");
+  const existing = new Set();
+  try {
+    fs.readFileSync(reviewsFile(pid), "utf8").split("\n").filter(Boolean)
+      .forEach(l => { try { existing.add(JSON.parse(l).id); } catch {} });
+  } catch {}
+  const fresh = (rv.data || []).filter(r => !existing.has(r.id));
+  if (fresh.length)
+    fs.appendFileSync(reviewsFile(pid), fresh.map(r => JSON.stringify({
+      id: r.id, store: "app_store", rating: r.attributes.rating, title: r.attributes.title,
+      body: r.attributes.body, territory: r.attributes.territory, when: r.attributes.createdDate,
+    })).join("\n") + "\n");
+  const st = readJsonFile(reviewsStateFile(pid), {});
+  st.lastCollected = new Date().toISOString();
+  st.archived = existing.size + fresh.length;
+  fs.writeFileSync(reviewsStateFile(pid), JSON.stringify(st, null, 2) + "\n");
+  return { ok: true, collected: fresh.length, archived: st.archived };
+}
+
+function runCommandSplit(cmd, timeoutMs) {
+  return new Promise(resolve => {
+    exec(cmd, { timeout: timeoutMs || 120000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      resolve({ ok: !err, stdout: (stdout || "").trim(), stderr: (stderr || "").trim().slice(-800) });
+    });
+  });
+}
+
+/* Contract: the command gets the archived JSONL path as {file} and prints ONE
+ * JSON object to stdout: { sentiment: {pos, neu, neg}, themes: [{tone, label, n}] } */
+async function analyzeReviews(pid, prodCfg) {
+  const cmd = prodCfg.reviews && prodCfg.reviews.analyze_command;
+  if (!cmd) return { error: "reviews.analyze_command not set" };
+  if (!fs.existsSync(reviewsFile(pid))) return { error: "no archived reviews yet — collect first" };
+  const r = await runCommandSplit(cmd.split("{file}").join(reviewsFile(pid)), 300000);
+  if (!r.ok) return { error: "analyze command failed", output: r.stderr || r.stdout };
+  let analysis;
+  try { analysis = JSON.parse(r.stdout); }
+  catch { return { error: "analyze command did not print valid JSON", output: r.stdout.slice(0, 300) }; }
+  analysis.at = new Date().toISOString();
+  fs.writeFileSync(analysisFile(pid), JSON.stringify(analysis, null, 2) + "\n");
+  const st = readJsonFile(reviewsStateFile(pid), {});
+  st.lastAnalyzed = analysis.at;
+  fs.writeFileSync(reviewsStateFile(pid), JSON.stringify(st, null, 2) + "\n");
+  return { ok: true, analysis };
+}
+
+const DAY = 86400000;
+async function reviewsCron() {
+  for (const prodCfg of listProducts()) {
+    const as = (prodCfg.integrations || {}).app_store;
+    if (!as || !as.app_id) continue;
+    try {
+      const st = readJsonFile(reviewsStateFile(prodCfg.id), {});
+      if (!st.lastCollected || Date.now() - new Date(st.lastCollected).getTime() > DAY) {
+        await collectReviews(prodCfg.id, prodCfg);
+        cache.delete("reviews:" + prodCfg.id);
+      }
+    } catch (e) { console.error("[reviews] collect " + prodCfg.id + ": " + e.message); }
+    try {
+      const st = readJsonFile(reviewsStateFile(prodCfg.id), {});
+      if (prodCfg.reviews && prodCfg.reviews.analyze_command && st.archived > 0 &&
+          (!st.lastAnalyzed || Date.now() - new Date(st.lastAnalyzed).getTime() > 7 * DAY)) {
+        await analyzeReviews(prodCfg.id, prodCfg);
+        cache.delete("reviews:" + prodCfg.id);
+      }
+    } catch (e) { console.error("[reviews] analyze " + prodCfg.id + ": " + e.message); }
+  }
+}
+setTimeout(reviewsCron, 20000);
+setInterval(reviewsCron, 6 * 3600000);
 
 async function rcFetch(pid, pth) {
   const key = readSecret(pid, "revenuecat_secret");
@@ -590,12 +679,31 @@ const server = http.createServer(async (req, res) => {
             const d = await fetchJson(base + "/api/prometheus/grafana/api/v1/rules");
             const rules = ((d.data || {}).groups || []).flatMap(g =>
               (g.rules || []).map(r => ({ name: r.name, state: r.state })));
-            return send(res, 200, { available: true, rules,
+            let recent = [];
+            try {
+              const ann = await fetchJson(base + "/api/annotations?limit=8&type=alert");
+              recent = (Array.isArray(ann) ? ann : []).map(a => ({
+                when: a.time, msg: ((a.alertName ? a.alertName + " — " : "") + (a.newState || a.text || "")).slice(0, 160) }));
+            } catch {}
+            return send(res, 200, { available: true, rules, recent,
                                     webhook: !!readSecret(id, "discord_webhook") });
           } catch (e) {
             return send(res, 200, { available: false, reason: "grafana_unreachable", error: String(e.message || e) });
           }
         }
+      } catch (e) { return send(res, 502, { error: String(e.message || e) }); }
+    }
+
+    const rvm = p.match(/^\/api\/products\/([a-z0-9-]+)\/reviews\/(collect|analyze)$/);
+    if (rvm && req.method === "POST") {
+      const prodCfg = readProduct(rvm[1]);
+      if (!prodCfg) return send(res, 404, { error: "unknown product" });
+      try {
+        const r = rvm[2] === "collect"
+          ? await collectReviews(rvm[1], prodCfg)
+          : await analyzeReviews(rvm[1], prodCfg);
+        cache.delete("reviews:" + rvm[1]);
+        return send(res, r.error ? 400 : 200, r);
       } catch (e) { return send(res, 502, { error: String(e.message || e) }); }
     }
 

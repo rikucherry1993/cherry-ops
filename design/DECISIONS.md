@@ -143,6 +143,22 @@ section.
   user-command AI theme summaries (`reviews.analyze_command`, per the
   generalization principles), and a recent-alerts feed.
 
+## Phase 5 notes (2026-08-04)
+
+- Review archiving: the daemon collects App Store reviews daily (6-hourly cron
+  with a 24 h gate + startup catch-up) into `<home>/reviews/<pid>.jsonl`,
+  deduped by review id. Manual "Collect now" exists.
+- AI theme summaries follow the generalization principles: the user declares
+  `reviews.analyze_command`; it receives the archived JSONL path as `{file}`
+  and must print one JSON object to stdout —
+  `{ sentiment: {pos, neu, neg}, themes: [{tone, label, n}] }`. Runs weekly
+  when reviews exist, or via "Analyze now". The result renders as the
+  sentiment bar + theme rows from the Phase 0 design.
+- Recent alerts come from Grafana's annotations API (alert state changes).
+- Play Store integration stays deferred on purpose: with no Android product
+  or Play credentials in the fleet, the code could not be verified against
+  the real API; it lands when the first Android product exists.
+
 ## Phase plan impact
 
 - Reviews collection + analysis and alert test-ping are new daemon

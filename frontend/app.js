@@ -560,6 +560,13 @@ function secAlerts(p) {
       '<span class="sp" style="flex:1">'+esc(r.name)+'</span>'+
       (r.state === "firing" ? '<span class="chip err">firing</span>'
                             : '<span class="chip ok">'+esc(r.state || "normal")+'</span>')+'</div>').join("");
+    if (st && st.available) {
+      body += '<div class="recent-lbl">Recent alerts</div>'+
+        ((st.recent || []).map(x =>
+          '<div class="run" style="padding-left:0"><span class="faint" style="width:64px">'+esc(rel(x.when))+'</span>'+
+          '<span>'+esc(x.msg)+'</span></div>').join("")
+        || '<div class="run faint" style="padding-left:0">no alerts recorded</div>');
+    }
   }
   return secWrap("alerts")+
     secHead("alerts", "Alerts", "rules live in Grafana; this panel only reports",
@@ -601,6 +608,23 @@ function secReviews(p) {
     const head = '<div class="rating-row"><span class="rv">'+esc(a.avgRecent || "—")+'</span>'+
       '<span class="stars">★</span>'+
       '<span class="muted" style="font-size:11px">average of the last '+ (a.count || 0)+' App Store reviews</span></div>';
+    let analysis = "";
+    if (st.analysis) {
+      const s = st.analysis.sentiment || {};
+      const tot = (s.pos || 0) + (s.neu || 0) + (s.neg || 0);
+      const pct = n => tot ? ((n || 0) / tot * 100).toFixed(1) : 0;
+      analysis =
+        (tot ? '<div class="sent">'+
+          '<i style="width:'+pct(s.pos)+'%;background:var(--ok)"></i>'+
+          '<i style="width:'+pct(s.neu)+'%;background:var(--line2)"></i>'+
+          '<i style="width:'+pct(s.neg)+'%;background:var(--err)"></i></div>'+
+          '<div class="mono faint" style="font-size:10px">'+(s.pos||0)+' positive · '+(s.neu||0)+' neutral · '+(s.neg||0)+' negative</div>' : "")+
+        '<div class="recent-lbl">Themes — AI summary ('+esc(rel(st.analysis.at))+')</div>'+
+        (st.analysis.themes || []).map(t =>
+          '<div class="theme-row"><span class="dot '+(t.tone==="pos"?"ok":t.tone==="neg"?"err":"off")+'"></span>'+
+          '<span style="flex:1">'+esc(t.label)+'</span>'+
+          '<span class="mono faint">×'+esc(String(t.n ?? ""))+'</span></div>').join("");
+    }
     const rows = (a.recent || []).slice(0, 8).map(x =>
       '<div class="rrow"><div class="rmeta">'+
       '<span class="stars">'+"★".repeat(x.rating)+'<span class="faint">'+"☆".repeat(5 - x.rating)+'</span></span>'+
@@ -608,9 +632,21 @@ function secReviews(p) {
       '<a href="https://appstoreconnect.apple.com" target="_blank" rel="noopener" style="margin-left:auto">Reply '+EXT+'</a>'+
       '</div><div class="rtext">'+(x.title ? '<strong>'+esc(x.title)+'</strong> — ' : "")+esc(x.body || "")+'</div></div>').join("")
       || stub("No reviews yet.");
-    body = head + rows +
-      '<div class="flags-foot"><span class="mono faint" style="font-size:10.5px">daemon-cached 1 h · scheduled archiving + AI theme summaries land in Phase 5</span>'+
-      '<button class="btn" onclick="App.loadExt(\''+p.id+'\',\'reviews\',true)">Refresh</button></div>';
+    const arch = st.archive || {};
+    const busy = st.busy;
+    body = head + analysis + '<div class="recent-lbl">Latest reviews</div>' + rows +
+      '<div class="flags-foot"><span class="mono faint" style="font-size:10.5px">'+
+      'archived '+(arch.archived ?? 0)+' · collected daily by the daemon'+
+      (arch.lastCollected ? ' · last run '+esc(rel(arch.lastCollected)) : '')+'</span>'+
+      '<span style="display:flex;gap:8px">'+
+      '<button class="btn" '+(busy ? "disabled" : "")+' onclick="App.reviewsAction(\''+p.id+'\',\'collect\')">'+
+        (busy === "collect" ? "Collecting…" : "Collect now")+'</button>'+
+      (st.canAnalyze
+        ? '<button class="btn" '+(busy ? "disabled" : "")+' onclick="App.reviewsAction(\''+p.id+'\',\'analyze\')">'+
+          (busy === "analyze" ? "Analyzing…" : "Analyze now")+'</button>'
+        : '<span class="chip" title="set reviews.analyze_command in the product config">no analyze_command</span>')+
+      '<button class="btn" onclick="App.loadExt(\''+p.id+'\',\'reviews\',true)">Refresh</button>'+
+      '</span></div>';
   }
   return secWrap("reviews")+
     secHead("reviews", "Store Reviews", "replies happen in the store console", "")+
@@ -929,6 +965,18 @@ async function dispatchWf(pid, wfId) {
   });
 }
 
+async function reviewsAction(pid, action) {
+  const st = state.reviews[pid];
+  if (!st) return;
+  st.busy = action; render();
+  try { await api("/api/products/"+pid+"/reviews/"+action, { method: "POST" }); }
+  catch (e) {
+    openModal({ title: action === "collect" ? "Collection failed" : "Analysis failed",
+      body: '<div class="mb">'+esc(e.message)+'</div>', confirm: "OK", onConfirm: null });
+  }
+  await loadExt(pid, "reviews", true);
+}
+
 async function alertPing(pid) {
   const st = state.alertRules[pid] || {};
   st.pinging = true; render();
@@ -1114,6 +1162,6 @@ setInterval(async () => {
 return { go, openEditor, saveProduct, confirmDelete, openSecret, saveSecret,
          openModal, closeModal, confirmModal, procAction, startAll, stopAll, toggleLog,
          loadFlags, loadRC, openFlagsPublish, openRCPublish,
-         loadExt, dispatchWf, alertPing,
+         loadExt, dispatchWf, alertPing, reviewsAction,
          dragStart, dragEnd, dragOver, dragLeave, drop, moveSec, refresh };
 })();
