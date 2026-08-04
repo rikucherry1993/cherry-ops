@@ -63,6 +63,45 @@ failed publish), Burrow = cold start (everything stopped / unconfigured /
 pre-release). The portal itself is fully generic: it composes each tab from a
 `products/<name>.yaml` manifest, so any product mix works with zero UI code.
 
+## Zero-project-info standard (added 2026-08-04, binding)
+
+The repo (the panel itself) must never contain any project information.
+Products are configured by the user in the GUI after opening the panel and
+stored outside the repo in the daemon data dir (`~/.cherry-ops/products/*.json`,
+overridable via `CHERRY_OPS_HOME`). This refines HANDOFF's manifest decision:
+still manifest-driven and fully generic, but manifests are user data (JSON,
+GUI-edited, hand-editable) rather than files in the repo. Demo/fictional data
+may exist only inside `design/mockup.html`. Layout order is part of the product
+config (`layout` key) and persists daemon-side.
+
+## GUI secret entry (added 2026-08-04, owner override of HANDOFF lock #3)
+
+Secrets MAY be entered in the GUI, under three binding conditions: (1) no
+caching anywhere — `no-store` responses, no localStorage, entry field cleared
+on save; (2) write-only / single-shot — after saving, no UI and no API can
+display or return a value; (3) the local storage path
+(`<home>/secrets/<name>`, chmod 600) is stated in the GUI so the user can
+clear (delete the file) or rotate (set again). Everything else from HANDOFF #3
+stands: values live only on the daemon host and are never embedded in pages.
+
+Scope (owner decision 2026-08-04): secrets are PER-PRODUCT — one full set per
+product at `<home>/secrets/<product-id>/<name>`, no global fallback. Each
+product page carries its own Secrets section; account-level keys (ASC, Play,
+GitHub) are intentionally duplicated across products for model simplicity.
+Deleting a product deletes its secrets directory.
+
+## Flags publish target (corrected 2026-08-04)
+
+There is no GrowthBook Cloud in the owner's setup: the local self-hosted GB is
+the only editor, and "published" means the SDK payload JSON uploaded to the
+product's own CDN. Phase 3 therefore diffs the local GB feature API against
+the currently published payload (a public URL — no credential needed) and the
+git-gated chain ends at the CDN upload, not at a cloud GB API. One local GB
+secret key suffices (`growthbook_token`; OSS only issues admin-scope keys,
+acceptable for a localhost-only daemon). The product config will declare the
+published payload URL per product so other setups (including a real GB Cloud)
+can plug in the same way.
+
 ## Phase plan impact
 
 - Reviews collection + analysis and alert test-ping are new daemon
