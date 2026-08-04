@@ -84,7 +84,12 @@ template:
   "grafana": { "base_url": "http://localhost:3000",
                "dashboards": [ { "uid": "events", "label": "Events" } ] },
   "release": { "workflows": [ { "id": "release.yml", "label": "Release" } ] },
-  "integrations": { "revenuecat": {}, "app_store": {}, "play_store": {} },
+  "integrations": {
+    "revenuecat": {},
+    "app_store": { "app_id": "1234567890", "key_id": "ABC123DEF4",
+                   "issuer_id": "00000000-0000-0000-0000-000000000000" },
+    "play_store": {}
+  },
   "alerts": { "channel": "discord" }
 }
 ```
@@ -97,6 +102,7 @@ template:
 | 1 | Daemon skeleton, GUI-configured products, generic rendering, stubs | done |
 | 2 | process-compose wiring: live status, start/stop, logs | done |
 | 3 | Flags diff/publish + remote-config editor (bring-your-own publish command) | done |
-| 4 | GitHub runs, store versions/KPIs/reviews, alert wiring | next |
+| 4 | Live store versions (ASC), RevenueCat KPIs, recent reviews, GitHub runs/dispatch, alert rules + test ping | done |
+| 5 | Play integration, scheduled review archiving + AI theme summaries, recent-alert feed | planned |
 
 Design rationale and the full decision record live in `design/DECISIONS.md`.

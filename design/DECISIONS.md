@@ -125,6 +125,24 @@ pipeline; the portal owns diff/confirm/execute/verify. The standalone local
 flags-editor process becomes redundant once its product uses the Remote Config
 section.
 
+## Phase 4 notes (2026-08-04)
+
+- App Store Connect is called natively by the daemon (stdlib ES256 JWT;
+  `integrations.app_store` carries app_id / key_id / issuer_id, the .p8 is the
+  per-product `asc_key_p8` secret): live version, pending review state,
+  phased-release day, recent customer reviews. All responses TTL-cached
+  (stores 10 min, reviews 1 h, KPIs 10 min, runs 2 min).
+- RevenueCat KPIs come from the v2 overview metrics endpoint; the project id
+  auto-resolves from the key when `project_id` is not declared.
+- GitHub workflow runs/dispatch use `repo` + `release.workflows` +
+  the `github_token` secret; dispatch ref = `release.branch` or main.
+- Alert rule states are read from Grafana's rules API; Test ping posts to the
+  `discord_webhook` secret daemon-side.
+- Deferred to Phase 5: Play Store integration (versions + reviews — the 7-day
+  reviews window will need daily archiving), scheduled review archiving with
+  user-command AI theme summaries (`reviews.analyze_command`, per the
+  generalization principles), and a recent-alerts feed.
+
 ## Phase plan impact
 
 - Reviews collection + analysis and alert test-ping are new daemon

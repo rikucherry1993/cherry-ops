@@ -15,13 +15,9 @@ let knownSecrets = [];
 let secretsDir = "";
 let health = null;
 const state = { tab: null, offline: false, layout: {}, procs: {}, logs: {}, expanded: new Set(),
-                flags: {}, rc: {} };
+                flags: {}, rc: {}, stores: {}, kpis: {}, reviews: {}, runs: {}, alertRules: {} };
 let modalConfirm = null;
 let dragKey = null;
-
-const PH2 = "process-compose wiring lands in Phase 2";
-const PH3 = "flags diff + git-gated publish land in Phase 3";
-const PH4 = "live store/CI data lands in Phase 4";
 
 /* -------------------------------------------------------------------- api */
 
@@ -114,6 +110,21 @@ function esc(s) {
 
 function stub(note) {
   return '<div class="cache-note" style="margin-top:0">'+esc(note)+'</div>';
+}
+
+function rel(iso) {
+  if (!iso) return "—";
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 90) return "just now";
+  if (s < 5400) return Math.round(s / 60) + "m ago";
+  if (s < 129600) return Math.round(s / 3600) + "h ago";
+  return Math.round(s / 86400) + "d ago";
+}
+
+function fmtDur(secs) {
+  if (secs == null) return "—";
+  const m = Math.floor(secs / 60), s = secs % 60;
+  return m ? m + "m " + String(s).padStart(2, "0") + "s" : s + "s";
 }
 
 /* ------------------------------------------------------------------ render */
@@ -210,17 +221,31 @@ const INTEG = {
 
 function verBand(p) {
   const integ = p.integrations || {};
+  const st = state.stores[p.id];
   const cells = [];
-  if (integ.app_store) cells.push({ store:"App Store", os:"iOS", url:INTEG.app_store.url });
-  if (integ.play_store) cells.push({ store:"Google Play", os:"Android", url:INTEG.play_store.url });
-  const body = cells.length
-    ? cells.map(s =>
-        '<div class="store">'+
-        '<div class="eyebrow"><span>'+s.store+' · '+s.os+'</span>'+
-        '<a href="'+s.url+'" target="_blank" rel="noopener" aria-label="Open '+s.store+'">'+EXT+'</a></div>'+
-        '<div class="ver">— <span class="chip">'+ (secretOk(p.id, s.store==="App Store"?"asc_key_p8":"play_service_account") ? "awaiting Phase 4" : "credentials missing") +'</span></div>'+
-        '<div class="vnote">live version + rollout status arrive in Phase 4</div>'+
-        '</div>').join("")
+  const cell = (label, os, url, d) => {
+    let ver = "—", chip = '<span class="chip">loading…</span>', note = "", sub = "";
+    if (d && d.error) { chip = '<span class="chip warn">unavailable</span>'; note = d.error; }
+    else if (d && d.state === "live") {
+      ver = "v"+d.version;
+      chip = '<span class="chip ok">live</span>';
+      if (d.phased) note = "phased release · day "+d.phased.day+"/7 · "+String(d.phased.state).toLowerCase();
+      if (d.pending) sub = "v"+d.pending.version+" · "+String(d.pending.state).replace(/_/g, " ").toLowerCase();
+    } else if (d) {
+      chip = '<span class="chip">not live</span>';
+      if (d.pending) sub = "v"+d.pending.version+" · "+String(d.pending.state).replace(/_/g, " ").toLowerCase();
+    }
+    return '<div class="store">'+
+      '<div class="eyebrow"><span>'+label+' · '+os+'</span>'+
+      '<a href="'+url+'" target="_blank" rel="noopener" aria-label="Open '+label+'">'+EXT+'</a></div>'+
+      '<div class="ver">'+esc(ver)+' '+chip+'</div>'+
+      (note ? '<div class="vnote">'+esc(note)+'</div>' : "")+
+      (sub ? '<div class="vsub">'+esc(sub)+'</div>' : "")+
+      '</div>';
+  };
+  if (integ.app_store) cells.push(cell("App Store", "iOS", INTEG.app_store.url, st && st.app_store));
+  if (integ.play_store) cells.push(cell("Google Play", "Android", INTEG.play_store.url, st && st.play_store));
+  const body = cells.length ? cells.join("")
     : '<div class="store"><div class="eyebrow"><span>Store versions</span></div>'+
       '<div class="vnote" style="margin-top:4px">Declare <span class="mono">integrations.app_store</span> / '+
       '<span class="mono">integrations.play_store</span> in the product config to track live versions here.</div></div>';
@@ -440,21 +465,65 @@ function secRevenue(p) {
         : '<span class="hint">Declare integrations.'+k+' in the product config to enable.</span>')+
       '</div>';
   }).join("");
+  const kp = state.kpis[p.id];
+  let kpis = "";
+  if (integ.revenuecat) {
+    if (!kp) kpis = stub("loading KPIs…");
+    else if (kp.error) kpis = stub("KPIs unavailable: "+kp.error);
+    else {
+      const PICK = ["mrr", "active_subscriptions", "active_trials", "revenue", "new_customers", "active_users"];
+      const chosen = PICK.map(id => (kp.metrics || []).find(m => m.id === id)).filter(Boolean).slice(0, 4);
+      kpis = '<div class="kpis">'+chosen.map(m => {
+        const v = m.unit === "$" ? "$"+Number(m.value).toLocaleString(undefined, { maximumFractionDigits: 0 })
+                                 : Number(m.value).toLocaleString();
+        return '<div class="kpi"><div class="kl">'+esc(m.name)+'</div><div class="kv">'+esc(v)+'</div>'+
+               '<div class="kd">'+esc(m.period || "")+'</div></div>';
+      }).join("")+'</div>'+
+      '<div class="cache-note">daemon-cached 10 min (charts API limit 25 req/min) · charts live in Grafana</div>';
+    }
+  } else {
+    kpis = stub("Declare integrations.revenuecat to get KPI tiles here.");
+  }
   return secWrap("revenue")+
-    secHead("revenue", "Revenue / Stores", "read-only · KPI numbers arrive in Phase 4", "")+
-    '<div class="sec-body"><div class="conns">'+conns+'</div>'+
-    stub("KPI tiles (daemon-cached) land in Phase 4; charts live in Grafana.")+
-    '</div></section>';
+    secHead("revenue", "Revenue / Stores", "read-only · daemon-cached", "")+
+    '<div class="sec-body"><div class="conns">'+conns+'</div>'+kpis+'</div></section>';
 }
 
 function secRelease(p) {
   const wfs = (p.release && p.release.workflows) || [];
-  const rows = wfs.map(w =>
-    '<div class="wf"><div class="wf-head">'+
-      '<span class="id">'+esc(w.id)+'</span><span class="wl">'+esc(w.label||"")+'</span>'+
-      '<button class="btn" disabled title="'+PH4+'">Dispatch…</button>'+
-    '</div><div class="run faint">run history arrives in Phase 4</div></div>').join("")
-    || stub("Add release.workflows to the product config to dispatch GitHub Actions from here.");
+  const st = state.runs[p.id];
+  let rows;
+  if (!wfs.length || !p.repo) {
+    rows = stub("Add repo plus release.workflows to the product config to dispatch GitHub Actions and see run history here.");
+  } else if (!st) {
+    rows = stub("loading runs…");
+  } else if (st.error) {
+    rows = stub("Runs unavailable: "+st.error);
+  } else {
+    rows = (st.workflows || []).map(w => {
+      const runs = w.error
+        ? '<div class="run faint">'+esc(w.error)+'</div>'
+        : (w.runs || []).map(r => {
+            const dot = r.status !== "completed" ? "warn"
+              : r.conclusion === "success" ? "ok" : "err";
+            const label = r.status !== "completed" ? r.status : (r.conclusion || "?");
+            return '<div class="run"><span style="width:44px">#'+r.n+'</span>'+
+              '<span style="width:86px;display:flex;align-items:center;gap:6px"><span class="dot '+dot+'"></span>'+esc(label)+'</span>'+
+              '<span class="faint" style="width:70px">'+esc(r.sha)+'</span>'+
+              '<span style="width:64px;text-align:right">'+esc(fmtDur(r.dur))+'</span>'+
+              '<span class="faint">'+esc(rel(r.when))+'</span>'+
+              '<a href="'+esc(r.url)+'" target="_blank" rel="noopener" style="margin-left:auto">'+EXT+'</a></div>';
+          }).join("") || '<div class="run faint">no runs yet</div>';
+      return '<div class="wf"><div class="wf-head">'+
+        '<span class="id">'+esc(w.id)+'</span><span class="wl">'+esc(w.label||"")+'</span>'+
+        (st.canDispatch
+          ? '<button class="btn" onclick="App.dispatchWf(\''+p.id+'\',\''+esc(w.id)+'\')">Dispatch…</button>'
+          : '<button class="btn" disabled title="set the github_token secret to dispatch">Dispatch…</button>')+
+        '</div>'+runs+'</div>';
+    }).join("")+
+    '<div class="flags-foot"><span class="mono faint" style="font-size:10.5px">daemon-cached 2 min</span>'+
+    '<button class="btn" onclick="App.loadExt(\''+p.id+'\',\'runs\',true)">Refresh</button></div>';
+  }
   return secWrap("release")+
     secHead("release", "Release", "workflow_dispatch via GitHub Actions",
       p.repo ? deeplink("https://github.com/"+esc(p.repo)+"/actions", "GitHub Actions") : "")+
@@ -464,15 +533,34 @@ function secRelease(p) {
 function secAlerts(p) {
   const channel = p.alerts && p.alerts.channel;
   const base = p.grafana && p.grafana.base_url;
-  const body = channel
-    ? '<div class="srow" style="border-top:none">'+
-        (secretOk(p.id, "discord_webhook")
-          ? '<span class="chip ok">'+esc(channel)+' · webhook configured</span>'
-          : '<span class="chip warn">'+esc(channel)+' · webhook secret missing</span>')+
-        '<span class="sp">rules evaluate in Grafana → contact point → push via the '+esc(channel)+' mobile app</span>'+
-        '<button class="btn" disabled title="'+PH4+'">Test ping</button></div>'+
-      stub("Rule states and recent alerts land in Phase 4; define rules in Grafana → Alerting.")
-    : stub("Set alerts.channel (e.g. \"discord\") in the product config, then add a matching contact point in Grafana.");
+  const st = state.alertRules[p.id];
+  let body;
+  if (!channel) {
+    body = stub("Set alerts.channel (e.g. \"discord\") in the product config, then add a matching contact point in Grafana.");
+  } else {
+    const hook = st ? st.webhook : secretOk(p.id, "discord_webhook");
+    body = '<div class="srow" style="border-top:none">'+
+      (hook ? '<span class="chip ok">'+esc(channel)+' · webhook configured</span>'
+            : '<span class="chip warn">'+esc(channel)+' · webhook secret missing</span>')+
+      '<span class="sp">rules evaluate in Grafana → contact point → push via the '+esc(channel)+' mobile app</span>'+
+      (st && st.pinging
+        ? '<button class="btn" disabled>Pinging…</button>'
+        : st && st.pingResult
+          ? '<span class="chip '+(st.pingResult === "sent" ? "ok" : "err")+'">'+
+            (st.pingResult === "sent" ? "Ping sent ✓" : esc(st.pingResult.slice(0, 60)))+'</span>'
+          : '<button class="btn" '+(hook ? '' : 'disabled title="set the discord_webhook secret" ')+
+            'onclick="App.alertPing(\''+p.id+'\')">Test ping</button>')+
+      '</div>';
+    if (!st) body += stub("loading rule states…");
+    else if (!st.available) body += stub("Rule states unavailable ("+esc(st.error || st.reason)+").");
+    else if (!(st.rules || []).length)
+      body += stub("No alert rules defined yet — create them in Grafana → Alerting.");
+    else body += st.rules.map(r =>
+      '<div class="srow"><span class="dot '+(r.state === "firing" ? "err blink" : "ok")+'"></span>'+
+      '<span class="sp" style="flex:1">'+esc(r.name)+'</span>'+
+      (r.state === "firing" ? '<span class="chip err">firing</span>'
+                            : '<span class="chip ok">'+esc(r.state || "normal")+'</span>')+'</div>').join("");
+  }
   return secWrap("alerts")+
     secHead("alerts", "Alerts", "rules live in Grafana; this panel only reports",
       base ? deeplink(base+"/alerting", "Grafana alerting") : "")+
@@ -497,14 +585,36 @@ function secSecrets(p) {
 
 function secReviews(p) {
   const integ = p.integrations || {};
-  const hasStore = integ.app_store || integ.play_store;
+  const st = state.reviews[p.id];
+  let body;
+  if (!integ.app_store && !integ.play_store) {
+    body = stub("Declare a store integration in the product config; reviews appear once the app is live.");
+  } else if (!integ.app_store) {
+    body = stub("Play reviews are not implemented yet (the 7-day API window will require daily archiving).");
+  } else if (!st) {
+    body = stub("loading reviews…");
+  } else if (st.error) {
+    body = stub("Reviews unavailable: "+st.error)+
+      '<button class="btn" onclick="App.loadExt(\''+p.id+'\',\'reviews\',true)">Retry</button>';
+  } else {
+    const a = st.app_store || {};
+    const head = '<div class="rating-row"><span class="rv">'+esc(a.avgRecent || "—")+'</span>'+
+      '<span class="stars">★</span>'+
+      '<span class="muted" style="font-size:11px">average of the last '+ (a.count || 0)+' App Store reviews</span></div>';
+    const rows = (a.recent || []).slice(0, 8).map(x =>
+      '<div class="rrow"><div class="rmeta">'+
+      '<span class="stars">'+"★".repeat(x.rating)+'<span class="faint">'+"☆".repeat(5 - x.rating)+'</span></span>'+
+      '<span>'+esc(x.territory || "")+' · '+esc(rel(x.when))+'</span>'+
+      '<a href="https://appstoreconnect.apple.com" target="_blank" rel="noopener" style="margin-left:auto">Reply '+EXT+'</a>'+
+      '</div><div class="rtext">'+(x.title ? '<strong>'+esc(x.title)+'</strong> — ' : "")+esc(x.body || "")+'</div></div>').join("")
+      || stub("No reviews yet.");
+    body = head + rows +
+      '<div class="flags-foot"><span class="mono faint" style="font-size:10.5px">daemon-cached 1 h · scheduled archiving + AI theme summaries land in Phase 5</span>'+
+      '<button class="btn" onclick="App.loadExt(\''+p.id+'\',\'reviews\',true)">Refresh</button></div>';
+  }
   return secWrap("reviews")+
-    secHead("reviews", "Store Reviews", "scheduled collection · replies happen in the store console", "")+
-    '<div class="sec-body">'+
-    (hasStore
-      ? stub("Daemon collection + AI summaries land in Phase 4. Note: the Play reviews API only looks back 7 days, so collection will run daily.")
-      : stub("Declare a store integration in the product config; review collection starts once the app is live."))+
-    '</div></section>';
+    secHead("reviews", "Store Reviews", "replies happen in the store console", "")+
+    '<div class="sec-body">'+body+'</div></section>';
 }
 
 /* ---------- settings ---------- */
@@ -588,7 +698,10 @@ const TEMPLATE = {
     dashboards: [ { uid: "events", label: "Events" } ],
   },
   release: { workflows: [ { id: "release.yml", label: "Release" } ] },
-  integrations: { revenuecat: {}, app_store: {} },
+  integrations: {
+    revenuecat: {},
+    app_store: { app_id: "1234567890", key_id: "ABC123DEF4", issuer_id: "00000000-0000-0000-0000-000000000000" },
+  },
   alerts: { channel: "discord" },
 };
 
@@ -780,6 +893,50 @@ function primeSections(tab) {
   if (!p) return;
   if (gbEnvsOf(p).length && !state.flags[p.id]) loadFlags(p.id);
   if (p.remote_config && p.remote_config.url && !state.rc[p.id]) loadRC(p.id);
+  const integ = p.integrations || {};
+  if ((integ.app_store || integ.play_store) && !state.stores[p.id]) loadExt(p.id, "stores");
+  if (integ.revenuecat && !state.kpis[p.id]) loadExt(p.id, "kpis");
+  if (integ.app_store && !state.reviews[p.id]) loadExt(p.id, "reviews");
+  if (p.repo && p.release && (p.release.workflows || []).length && !state.runs[p.id]) loadExt(p.id, "runs");
+  if (p.alerts && p.alerts.channel && p.grafana && p.grafana.base_url && !state.alertRules[p.id]) loadExt(p.id, "alertRules");
+}
+
+const EXT_PATHS = { stores: "stores", kpis: "kpis", reviews: "reviews",
+                    runs: "workflows", alertRules: "alerts/rules" };
+
+async function loadExt(pid, what, refresh) {
+  try {
+    state[what][pid] = await api("/api/products/"+pid+"/"+EXT_PATHS[what]+(refresh ? "?refresh=1" : ""));
+  } catch (e) { state[what][pid] = { error: e.message }; }
+  render();
+}
+
+async function dispatchWf(pid, wfId) {
+  const p = prod(pid);
+  openModal({
+    title: "Dispatch workflow",
+    body: '<div class="mb">Run <span class="mono">'+esc(wfId)+'</span> on '+
+          '<span class="mono">'+esc(p.repo)+'@'+esc((p.release && p.release.branch) || "main")+'</span> via workflow_dispatch?</div>',
+    confirm: "Dispatch",
+    onConfirm: async () => {
+      try { await api("/api/products/"+pid+"/workflows/"+encodeURIComponent(wfId)+"/dispatch", { method: "POST" }); }
+      catch (e) {
+        openModal({ title: "Dispatch failed", body: '<div class="mb">'+esc(e.message)+'</div>', confirm: "OK", onConfirm: null });
+        return;
+      }
+      setTimeout(() => loadExt(pid, "runs", true), 1500);
+    },
+  });
+}
+
+async function alertPing(pid) {
+  const st = state.alertRules[pid] || {};
+  st.pinging = true; render();
+  try { await api("/api/products/"+pid+"/alerts/ping", { method: "POST" }); st.pingResult = "sent"; }
+  catch (e) { st.pingResult = e.message; }
+  st.pinging = false;
+  render();
+  setTimeout(() => { st.pingResult = null; render(); }, 3000);
 }
 
 function openFlagsPublish(pid, envName) {
@@ -957,5 +1114,6 @@ setInterval(async () => {
 return { go, openEditor, saveProduct, confirmDelete, openSecret, saveSecret,
          openModal, closeModal, confirmModal, procAction, startAll, stopAll, toggleLog,
          loadFlags, loadRC, openFlagsPublish, openRCPublish,
+         loadExt, dispatchWf, alertPing,
          dragStart, dragEnd, dragOver, dragLeave, drop, moveSec, refresh };
 })();

@@ -10,6 +10,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { execFile, exec } = require("node:child_process");
+const crypto = require("node:crypto");
 
 const VERSION = "0.1.0";
 const HOST = "127.0.0.1";
@@ -192,6 +193,136 @@ function diffFeatures(loc, pub) {
   }
   for (const k of Object.keys(pf)) if (!(k in lf)) removed.push({ key: k, chg: summarize(pf[k]) + " → ∅" });
   return { added, modified, removed, dateUpdated: pub.dateUpdated || null };
+}
+
+/* --------------------------------------- store / revenue / ci integrations */
+
+/* Secrets are read here, daemon-side only, to call vendor APIs.
+ * They are never echoed into any response. */
+function readSecret(pid, name) {
+  try { return fs.readFileSync(path.join(SECRETS_DIR, pid, name), "utf8").trim(); }
+  catch { return null; }
+}
+
+const cache = new Map();
+async function cached(key, ttlMs, refresh, fn) {
+  const hit = cache.get(key);
+  if (hit && !refresh && Date.now() - hit.t < ttlMs) return hit.data;
+  const data = await fn();
+  cache.set(key, { t: Date.now(), data });
+  return data;
+}
+
+function b64url(buf) {
+  return Buffer.from(buf).toString("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+function ascToken(p8, keyId, issuerId) {
+  const now = Math.floor(Date.now() / 1000);
+  const head = b64url(JSON.stringify({ alg: "ES256", kid: keyId, typ: "JWT" }));
+  const payload = b64url(JSON.stringify({ iss: issuerId, iat: now, exp: now + 1200, aud: "appstoreconnect-v1" }));
+  const data = head + "." + payload;
+  const sig = crypto.sign("sha256", Buffer.from(data), { key: p8, dsaEncoding: "ieee-p1363" });
+  return data + "." + b64url(sig);
+}
+
+async function ascFetch(pid, appStore, pth) {
+  const p8 = readSecret(pid, "asc_key_p8");
+  if (!p8) throw new Error("asc_key_p8 not configured");
+  if (!appStore.key_id || !appStore.issuer_id)
+    throw new Error("integrations.app_store.key_id / issuer_id not set");
+  const res = await fetch("https://api.appstoreconnect.apple.com" + pth, {
+    headers: { Authorization: "Bearer " + ascToken(p8, appStore.key_id, appStore.issuer_id) },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error("ASC " + res.status + ": " + (await res.text()).slice(0, 200));
+  return res.json();
+}
+
+async function storeStatus(pid, prodCfg) {
+  const integ = prodCfg.integrations || {};
+  const out = {};
+  if (integ.app_store) {
+    const as = integ.app_store;
+    if (!as.app_id) out.app_store = { error: "integrations.app_store.app_id not set" };
+    else try {
+      const vs = await ascFetch(pid, as, "/v1/apps/" + as.app_id +
+        "/appStoreVersions?limit=10&fields[appStoreVersions]=versionString,appStoreState,createdDate");
+      const list = vs.data || [];
+      const live = list.find(v => v.attributes.appStoreState === "READY_FOR_SALE");
+      const pending = list.find(v => v.attributes.appStoreState !== "READY_FOR_SALE" &&
+        !/DEVELOPER_REMOVED_FROM_SALE|REMOVED_FROM_SALE|REJECTED|REPLACED/.test(v.attributes.appStoreState));
+      let phased = null;
+      if (live) {
+        try {
+          const ph = await ascFetch(pid, as, "/v1/appStoreVersions/" + live.id + "/appStoreVersionPhasedRelease");
+          if (ph.data) phased = { state: ph.data.attributes.phasedReleaseState,
+                                  day: ph.data.attributes.currentDayNumber };
+        } catch (_) {} /* 404 = no phased release for this version */
+      }
+      out.app_store = {
+        version: live ? live.attributes.versionString : null,
+        state: live ? "live" : "not_live",
+        pending: pending ? { version: pending.attributes.versionString, state: pending.attributes.appStoreState } : null,
+        phased,
+      };
+    } catch (e) { out.app_store = { error: String(e.message || e) }; }
+  }
+  if (integ.play_store) out.play_store = { error: "Play integration is not implemented yet" };
+  return out;
+}
+
+async function ascReviews(pid, prodCfg) {
+  const as = (prodCfg.integrations || {}).app_store;
+  if (!as || !as.app_id) return { error: "app_store integration not configured" };
+  try {
+    const rv = await ascFetch(pid, as, "/v1/apps/" + as.app_id +
+      "/customerReviews?sort=-createdDate&limit=20");
+    const recent = (rv.data || []).map(r => ({
+      rating: r.attributes.rating, title: r.attributes.title, body: (r.attributes.body || "").slice(0, 240),
+      territory: r.attributes.territory, when: r.attributes.createdDate,
+    }));
+    const avg = recent.length
+      ? (recent.reduce((s, r) => s + r.rating, 0) / recent.length).toFixed(1) : null;
+    return { app_store: { recent, avgRecent: avg, count: recent.length } };
+  } catch (e) { return { error: String(e.message || e) }; }
+}
+
+async function rcFetch(pid, pth) {
+  const key = readSecret(pid, "revenuecat_secret");
+  if (!key) throw new Error("revenuecat_secret not configured");
+  const res = await fetch("https://api.revenuecat.com/v2" + pth, {
+    headers: { Authorization: "Bearer " + key }, signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error("RevenueCat " + res.status + ": " + (await res.text()).slice(0, 200));
+  return res.json();
+}
+
+async function rcKpis(pid, prodCfg) {
+  const rcInteg = (prodCfg.integrations || {}).revenuecat;
+  if (!rcInteg) return { error: "revenuecat integration not configured" };
+  try {
+    let projectId = rcInteg.project_id;
+    if (!projectId) {
+      const projects = await rcFetch(pid, "/projects?limit=2");
+      const items = projects.items || [];
+      if (!items.length) throw new Error("no RevenueCat projects visible to this key");
+      projectId = items[0].id;
+    }
+    const m = await rcFetch(pid, "/projects/" + projectId + "/metrics/overview");
+    return { metrics: (m.metrics || []).map(x => ({
+      id: x.id, name: x.name, value: x.value, unit: x.unit, period: x.period })) };
+  } catch (e) { return { error: String(e.message || e) }; }
+}
+
+async function ghFetch(pid, repo, pth, opts) {
+  const tok = readSecret(pid, "github_token");
+  const res = await fetch("https://api.github.com/repos/" + repo + pth, Object.assign({
+    headers: Object.assign({ Accept: "application/vnd.github+json", "User-Agent": "cherry-ops" },
+      tok ? { Authorization: "Bearer " + tok } : {}),
+    signal: AbortSignal.timeout(10000) }, opts));
+  if (res.status === 204) return {};
+  if (!res.ok) throw new Error("GitHub " + res.status + (tok ? "" : " (no github_token configured)"));
+  return res.json();
 }
 
 /* ------------------------------------------------------------------ helpers */
@@ -417,6 +548,86 @@ const server = http.createServer(async (req, res) => {
         } catch {}
         return send(res, 200, { ok: true, env: env.name || "default", synced, diff, output: r.output });
       }
+    }
+
+    /* Store status / reviews / KPIs / workflow runs / alerts — vendor reads
+     * proxied and cached by the daemon (secrets never leave it). */
+    const xm = p.match(/^\/api\/products\/([a-z0-9-]+)\/(stores|reviews|kpis|workflows|alerts\/rules)$/);
+    if (xm && req.method === "GET") {
+      const id = xm[1], what = xm[2];
+      const prodCfg = readProduct(id);
+      if (!prodCfg) return send(res, 404, { error: "unknown product" });
+      const refresh = !!url.searchParams.get("refresh");
+      try {
+        if (what === "stores")
+          return send(res, 200, await cached("stores:" + id, 600000, refresh, () => storeStatus(id, prodCfg)));
+        if (what === "reviews")
+          return send(res, 200, await cached("reviews:" + id, 3600000, refresh, () => ascReviews(id, prodCfg)));
+        if (what === "kpis")
+          return send(res, 200, await cached("kpis:" + id, 600000, refresh, () => rcKpis(id, prodCfg)));
+        if (what === "workflows") {
+          const wfs = (prodCfg.release && prodCfg.release.workflows) || [];
+          if (!prodCfg.repo || !wfs.length) return send(res, 200, { available: false, reason: "not_configured" });
+          return send(res, 200, await cached("wf:" + id, 120000, refresh, async () => {
+            const workflows = await Promise.all(wfs.map(async w => {
+              try {
+                const d = await ghFetch(id, prodCfg.repo, "/actions/workflows/" + encodeURIComponent(w.id) + "/runs?per_page=5");
+                return { id: w.id, label: w.label || "", runs: (d.workflow_runs || []).map(r => ({
+                  n: r.run_number, status: r.status, conclusion: r.conclusion,
+                  sha: (r.head_sha || "").slice(0, 7), when: r.created_at,
+                  dur: r.updated_at && r.run_started_at
+                    ? Math.round((new Date(r.updated_at) - new Date(r.run_started_at)) / 1000) : null,
+                  url: r.html_url })) };
+              } catch (e) { return { id: w.id, label: w.label || "", error: String(e.message || e) }; }
+            }));
+            return { available: true, workflows, canDispatch: !!readSecret(id, "github_token") };
+          }));
+        }
+        if (what === "alerts/rules") {
+          const base = prodCfg.grafana && prodCfg.grafana.base_url;
+          if (!base) return send(res, 200, { available: false, reason: "not_configured" });
+          try {
+            const d = await fetchJson(base + "/api/prometheus/grafana/api/v1/rules");
+            const rules = ((d.data || {}).groups || []).flatMap(g =>
+              (g.rules || []).map(r => ({ name: r.name, state: r.state })));
+            return send(res, 200, { available: true, rules,
+                                    webhook: !!readSecret(id, "discord_webhook") });
+          } catch (e) {
+            return send(res, 200, { available: false, reason: "grafana_unreachable", error: String(e.message || e) });
+          }
+        }
+      } catch (e) { return send(res, 502, { error: String(e.message || e) }); }
+    }
+
+    const wdm = p.match(/^\/api\/products\/([a-z0-9-]+)\/workflows\/([^/]+)\/dispatch$/);
+    if (wdm && req.method === "POST") {
+      const id = wdm[1], wf = decodeURIComponent(wdm[2]);
+      const prodCfg = readProduct(id);
+      if (!prodCfg) return send(res, 404, { error: "unknown product" });
+      if (!readSecret(id, "github_token")) return send(res, 400, { error: "github_token not configured" });
+      const ref = (prodCfg.release && prodCfg.release.branch) || "main";
+      try {
+        await ghFetch(id, prodCfg.repo, "/actions/workflows/" + encodeURIComponent(wf) + "/dispatches",
+          { method: "POST", body: JSON.stringify({ ref }) });
+        cache.delete("wf:" + id);
+        return send(res, 200, { ok: true, ref });
+      } catch (e) { return send(res, 502, { error: String(e.message || e) }); }
+    }
+
+    const apm = p.match(/^\/api\/products\/([a-z0-9-]+)\/alerts\/ping$/);
+    if (apm && req.method === "POST") {
+      const id = apm[1];
+      const prodCfg = readProduct(id);
+      if (!prodCfg) return send(res, 404, { error: "unknown product" });
+      const hook = readSecret(id, "discord_webhook");
+      if (!hook) return send(res, 400, { error: "discord_webhook not configured" });
+      try {
+        const r = await fetch(hook, { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: "cherry-ops test ping — " + (prodCfg.name || id) }),
+          signal: AbortSignal.timeout(10000) });
+        if (!r.ok) throw new Error("webhook replied " + r.status);
+        return send(res, 200, { ok: true });
+      } catch (e) { return send(res, 502, { error: String(e.message || e) }); }
     }
 
     /* Write-only per-product secret entry: value goes to a chmod-600 file
