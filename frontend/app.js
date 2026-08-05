@@ -230,7 +230,13 @@ function verBand(p) {
       ver = "v"+d.version;
       chip = '<span class="chip ok">live</span>';
       if (d.phased) note = "phased release · day "+d.phased.day+"/7 · "+String(d.phased.state).toLowerCase();
+      else if (d.staged) note = "staged update · v"+d.staged.version+
+        (d.staged.fraction ? " · "+Math.round(d.staged.fraction*100)+"% of users" : "");
       if (d.pending) sub = "v"+d.pending.version+" · "+String(d.pending.state).replace(/_/g, " ").toLowerCase();
+    } else if (d && d.state === "staged") {
+      ver = "v"+(d.version || "?");
+      chip = '<span class="chip warn">staged rollout</span>';
+      if (d.staged && d.staged.fraction) note = Math.round(d.staged.fraction*100)+"% of users";
     } else if (d) {
       chip = '<span class="chip">not live</span>';
       if (d.pending) sub = "v"+d.pending.version+" · "+String(d.pending.state).replace(/_/g, " ").toLowerCase();
@@ -596,18 +602,18 @@ function secReviews(p) {
   let body;
   if (!integ.app_store && !integ.play_store) {
     body = stub("Declare a store integration in the product config; reviews appear once the app is live.");
-  } else if (!integ.app_store) {
-    body = stub("Play reviews are not implemented yet (the 7-day API window will require daily archiving).");
   } else if (!st) {
     body = stub("loading reviews…");
   } else if (st.error) {
     body = stub("Reviews unavailable: "+st.error)+
       '<button class="btn" onclick="App.loadExt(\''+p.id+'\',\'reviews\',true)">Retry</button>';
   } else {
-    const a = st.app_store || {};
-    const head = '<div class="rating-row"><span class="rv">'+esc(a.avgRecent || "—")+'</span>'+
+    const head = '<div class="rating-row"><span class="rv">'+esc(st.avgRecent || "—")+'</span>'+
       '<span class="stars">★</span>'+
-      '<span class="muted" style="font-size:11px">average of the last '+ (a.count || 0)+' App Store reviews</span></div>';
+      '<span class="muted" style="font-size:11px">average of the last '+(st.count || 0)+' reviews across stores</span>'+
+      Object.entries(st.errors || {}).map(([k, v]) =>
+        '<span class="chip warn" title="'+esc(v)+'">'+(k === "app_store" ? "App Store" : "Play")+': unavailable</span>').join("")+
+      '</div>';
     let analysis = "";
     if (st.analysis) {
       const s = st.analysis.sentiment || {};
@@ -625,11 +631,12 @@ function secReviews(p) {
           '<span style="flex:1">'+esc(t.label)+'</span>'+
           '<span class="mono faint">×'+esc(String(t.n ?? ""))+'</span></div>').join("");
     }
-    const rows = (a.recent || []).slice(0, 8).map(x =>
+    const rows = (st.recent || []).slice(0, 10).map(x =>
       '<div class="rrow"><div class="rmeta">'+
-      '<span class="stars">'+"★".repeat(x.rating)+'<span class="faint">'+"☆".repeat(5 - x.rating)+'</span></span>'+
-      '<span>'+esc(x.territory || "")+' · '+esc(rel(x.when))+'</span>'+
-      '<a href="https://appstoreconnect.apple.com" target="_blank" rel="noopener" style="margin-left:auto">Reply '+EXT+'</a>'+
+      '<span class="stars">'+"★".repeat(x.rating || 0)+'<span class="faint">'+"☆".repeat(5 - (x.rating || 0))+'</span></span>'+
+      '<span>'+(x.store === "play_store" ? "Play" : "App Store")+' · '+esc(x.territory || "")+' · '+esc(rel(x.when))+'</span>'+
+      '<a href="'+(x.store === "play_store" ? "https://play.google.com/console" : "https://appstoreconnect.apple.com")+
+      '" target="_blank" rel="noopener" style="margin-left:auto">Reply '+EXT+'</a>'+
       '</div><div class="rtext">'+(x.title ? '<strong>'+esc(x.title)+'</strong> — ' : "")+esc(x.body || "")+'</div></div>').join("")
       || stub("No reviews yet.");
     const arch = st.archive || {};
@@ -737,6 +744,7 @@ const TEMPLATE = {
   integrations: {
     revenuecat: {},
     app_store: { app_id: "1234567890", key_id: "ABC123DEF4", issuer_id: "00000000-0000-0000-0000-000000000000" },
+    play_store: { package: "com.example.myapp" },
   },
   alerts: { channel: "discord" },
 };
@@ -774,8 +782,7 @@ async function saveProduct(origId) {
   }
   closeModal();
   state.tab = origId || body.id;
-  delete state.flags[state.tab];
-  delete state.rc[state.tab];
+  invalidateExt(state.tab);
   await refresh();
 }
 
@@ -813,6 +820,7 @@ async function saveSecret(pid, name) {
   }
   ta.value = "";
   closeModal();
+  invalidateExt(pid);
   await refresh();
 }
 
@@ -922,6 +930,10 @@ async function loadRC(pid) {
   try { state.rc[pid] = await api("/api/products/"+pid+"/remote-config"); }
   catch (e) { state.rc[pid] = { available: false, reason: "error", error: e.message }; }
   render();
+}
+
+function invalidateExt(pid) {
+  ["flags","rc","stores","kpis","reviews","runs","alertRules"].forEach(k => { delete state[k][pid]; });
 }
 
 function primeSections(tab) {

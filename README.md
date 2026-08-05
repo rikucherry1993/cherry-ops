@@ -88,7 +88,7 @@ template:
     "revenuecat": {},
     "app_store": { "app_id": "1234567890", "key_id": "ABC123DEF4",
                    "issuer_id": "00000000-0000-0000-0000-000000000000" },
-    "play_store": {}
+    "play_store": { "package": "com.example.myapp" }
   },
   "alerts": { "channel": "discord" }
 }
@@ -104,6 +104,6 @@ template:
 | 3 | Flags diff/publish + remote-config editor (bring-your-own publish command) | done |
 | 4 | Live store versions (ASC), RevenueCat KPIs, recent reviews, GitHub runs/dispatch, alert rules + test ping | done |
 | 5 | Scheduled review archiving, AI theme summaries via `reviews.analyze_command`, recent-alert feed | done |
-| 6 | Play Store integration (versions + reviews) | when an Android product exists to verify against |
+| 6 | Play Store integration: production track versions, staged rollout, reviews in the shared archive | done |
 
 Design rationale and the full decision record live in `design/DECISIONS.md`.

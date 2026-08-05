@@ -155,9 +155,13 @@ section.
   when reviews exist, or via "Analyze now". The result renders as the
   sentiment bar + theme rows from the Phase 0 design.
 - Recent alerts come from Grafana's annotations API (alert state changes).
-- Play Store integration stays deferred on purpose: with no Android product
-  or Play credentials in the fleet, the code could not be verified against
-  the real API; it lands when the first Android product exists.
+- Play Store integration landed 2026-08-05 once the first Android app
+  existed: service-account JWT (RS256, stdlib) → androidpublisher v3;
+  production-track versions read via the edits open/read/delete dance
+  (live + staged rollout fraction feed the versions band), reviews merge
+  into the shared recent list and daily archive (their 7-day API window is
+  the reason archiving is daily). Config: `integrations.play_store.package`
+  + the `play_service_account` secret (the full service-account JSON).
 
 ## Phase plan impact
 

@@ -210,6 +210,14 @@ function readSecret(pid, name) {
 }
 
 const cache = new Map();
+
+/* Config or secret changes must be visible on the next page refresh —
+ * drop every cached vendor response for the product. */
+function clearProductCache(id) {
+  for (const k of [...cache.keys()])
+    if (k.endsWith(":" + id)) cache.delete(k);
+}
+
 async function cached(key, ttlMs, refresh, fn) {
   const hit = cache.get(key);
   if (hit && !refresh && Date.now() - hit.t < ttlMs) return hit.data;
@@ -273,27 +281,114 @@ async function storeStatus(pid, prodCfg) {
       };
     } catch (e) { out.app_store = { error: String(e.message || e) }; }
   }
-  if (integ.play_store) out.play_store = { error: "Play integration is not implemented yet" };
+  if (integ.play_store) out.play_store = await playStatus(pid, integ.play_store);
   return out;
 }
 
-async function ascReviews(pid, prodCfg) {
-  const as = (prodCfg.integrations || {}).app_store;
-  if (!as || !as.app_id) return { error: "app_store integration not configured" };
+/* ---- Google Play (service-account JWT, RS256) ---- */
+
+async function googleToken(pid) {
+  return cached("gtoken:" + pid, 50 * 60000, false, async () => {
+    const raw = readSecret(pid, "play_service_account");
+    if (!raw) throw new Error("play_service_account not configured");
+    const sa = JSON.parse(raw);
+    const now = Math.floor(Date.now() / 1000);
+    const head = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+    const claims = b64url(JSON.stringify({ iss: sa.client_email,
+      scope: "https://www.googleapis.com/auth/androidpublisher",
+      aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 }));
+    const data = head + "." + claims;
+    const sig = crypto.sign("sha256", Buffer.from(data), sa.private_key);
+    const res = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "grant_type=" + encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer") +
+            "&assertion=" + data + "." + b64url(sig),
+      signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error("Google token " + res.status + ": " + (await res.text()).slice(0, 200));
+    return (await res.json()).access_token;
+  });
+}
+
+async function playFetch(pid, pth, opts) {
+  const tok = await googleToken(pid);
+  const res = await fetch("https://androidpublisher.googleapis.com/androidpublisher/v3/applications/" + pth,
+    Object.assign({ headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" },
+                    signal: AbortSignal.timeout(15000) }, opts));
+  if (res.status === 204) return {};
+  if (!res.ok) throw new Error("Play " + res.status + ": " + (await res.text()).slice(0, 200));
+  return res.json();
+}
+
+/* Reading track state needs the edits dance: open an edit, read, delete it. */
+async function playStatus(pid, ps) {
+  if (!ps.package) return { error: "integrations.play_store.package not set" };
   try {
-    const rv = await ascFetch(pid, as, "/v1/apps/" + as.app_id +
-      "/customerReviews?sort=-createdDate&limit=20");
-    const recent = (rv.data || []).map(r => ({
-      rating: r.attributes.rating, title: r.attributes.title, body: (r.attributes.body || "").slice(0, 240),
-      territory: r.attributes.territory, when: r.attributes.createdDate,
-    }));
-    const avg = recent.length
-      ? (recent.reduce((s, r) => s + r.rating, 0) / recent.length).toFixed(1) : null;
-    return { app_store: { recent, avgRecent: avg, count: recent.length },
-             archive: readJsonFile(reviewsStateFile(pid), null),
-             analysis: readJsonFile(analysisFile(pid), null),
-             canAnalyze: !!(prodCfg.reviews && prodCfg.reviews.analyze_command) };
+    const edit = await playFetch(pid, ps.package + "/edits", { method: "POST", body: "{}" });
+    let track = null;
+    try { track = await playFetch(pid, ps.package + "/edits/" + edit.id + "/tracks/production"); }
+    finally { playFetch(pid, ps.package + "/edits/" + edit.id, { method: "DELETE" }).catch(() => {}); }
+    const releases = (track && track.releases) || [];
+    const live = releases.find(r => r.status === "completed");
+    const staged = releases.find(r => r.status === "inProgress");
+    return {
+      version: live ? live.name : (staged ? staged.name : null),
+      state: live ? "live" : (staged ? "staged" : "not_live"),
+      staged: staged ? { version: staged.name, fraction: staged.userFraction || null } : null,
+    };
   } catch (e) { return { error: String(e.message || e) }; }
+}
+
+async function playReviews(pid, ps) {
+  const d = await playFetch(pid, ps.package + "/reviews?maxResults=50");
+  return (d.reviews || []).map(r => {
+    const c = ((r.comments || [])[0] || {}).userComment || {};
+    return { id: r.reviewId, store: "play_store", rating: c.starRating, title: null,
+      body: (c.text || "").trim(), territory: (c.reviewerLanguage || "").toUpperCase(),
+      when: c.lastModified && c.lastModified.seconds
+        ? new Date(Number(c.lastModified.seconds) * 1000).toISOString() : null };
+  });
+}
+
+async function ascReviewList(pid, as, limit) {
+  const rv = await ascFetch(pid, as, "/v1/apps/" + as.app_id +
+    "/customerReviews?sort=-createdDate&limit=" + limit);
+  return (rv.data || []).map(r => ({ id: r.id, store: "app_store", rating: r.attributes.rating,
+    title: r.attributes.title, body: r.attributes.body || "", territory: r.attributes.territory,
+    when: r.attributes.createdDate }));
+}
+
+/* One list across both stores, newest first; per-store failures are partial. */
+async function fetchStoreReviews(pid, prodCfg, ascLimit) {
+  const integ = prodCfg.integrations || {};
+  const errors = {};
+  let list = [];
+  let sources = 0;
+  if (integ.app_store && integ.app_store.app_id) {
+    sources++;
+    try { list = list.concat(await ascReviewList(pid, integ.app_store, ascLimit)); }
+    catch (e) { errors.app_store = String(e.message || e); }
+  }
+  if (integ.play_store && integ.play_store.package) {
+    sources++;
+    try { list = list.concat(await playReviews(pid, integ.play_store)); }
+    catch (e) { errors.play_store = String(e.message || e); }
+  }
+  list.sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0));
+  return { list, errors, sources };
+}
+
+async function reviewsStatus(pid, prodCfg) {
+  const { list, errors, sources } = await fetchStoreReviews(pid, prodCfg, 20);
+  if (!sources) return { error: "no store integration configured" };
+  if (!list.length && Object.keys(errors).length === sources)
+    return { error: Object.values(errors).join(" · ") };
+  const rated = list.filter(r => r.rating);
+  const avg = rated.length ? (rated.reduce((s, r) => s + r.rating, 0) / rated.length).toFixed(1) : null;
+  return { recent: list.slice(0, 30).map(r => Object.assign({}, r, { body: (r.body || "").slice(0, 240) })),
+           avgRecent: avg, count: rated.length, errors,
+           archive: readJsonFile(reviewsStateFile(pid), null),
+           analysis: readJsonFile(analysisFile(pid), null),
+           canAnalyze: !!(prodCfg.reviews && prodCfg.reviews.analyze_command) };
 }
 
 /* ---- scheduled review archiving + user-command analysis ---- */
@@ -304,25 +399,23 @@ function analysisFile(pid) { return path.join(REVIEWS_DIR, pid + "-analysis.json
 function readJsonFile(f, dflt) { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return dflt; } }
 
 async function collectReviews(pid, prodCfg) {
-  const as = (prodCfg.integrations || {}).app_store;
-  if (!as || !as.app_id) return { error: "app_store integration not configured" };
-  const rv = await ascFetch(pid, as, "/v1/apps/" + as.app_id + "/customerReviews?sort=-createdDate&limit=200");
+  const { list, errors, sources } = await fetchStoreReviews(pid, prodCfg, 200);
+  if (!sources) return { error: "no store integration configured" };
+  if (!list.length && Object.keys(errors).length === sources)
+    return { error: Object.values(errors).join(" · ") };
   const existing = new Set();
   try {
     fs.readFileSync(reviewsFile(pid), "utf8").split("\n").filter(Boolean)
       .forEach(l => { try { existing.add(JSON.parse(l).id); } catch {} });
   } catch {}
-  const fresh = (rv.data || []).filter(r => !existing.has(r.id));
+  const fresh = list.filter(r => !existing.has(r.id));
   if (fresh.length)
-    fs.appendFileSync(reviewsFile(pid), fresh.map(r => JSON.stringify({
-      id: r.id, store: "app_store", rating: r.attributes.rating, title: r.attributes.title,
-      body: r.attributes.body, territory: r.attributes.territory, when: r.attributes.createdDate,
-    })).join("\n") + "\n");
+    fs.appendFileSync(reviewsFile(pid), fresh.map(r => JSON.stringify(r)).join("\n") + "\n");
   const st = readJsonFile(reviewsStateFile(pid), {});
   st.lastCollected = new Date().toISOString();
   st.archived = existing.size + fresh.length;
   fs.writeFileSync(reviewsStateFile(pid), JSON.stringify(st, null, 2) + "\n");
-  return { ok: true, collected: fresh.length, archived: st.archived };
+  return { ok: true, collected: fresh.length, archived: st.archived, errors };
 }
 
 function runCommandSplit(cmd, timeoutMs) {
@@ -355,8 +448,8 @@ async function analyzeReviews(pid, prodCfg) {
 const DAY = 86400000;
 async function reviewsCron() {
   for (const prodCfg of listProducts()) {
-    const as = (prodCfg.integrations || {}).app_store;
-    if (!as || !as.app_id) continue;
+    const integ = prodCfg.integrations || {};
+    if (!(integ.app_store && integ.app_store.app_id) && !(integ.play_store && integ.play_store.package)) continue;
     try {
       const st = readJsonFile(reviewsStateFile(prodCfg.id), {});
       if (!st.lastCollected || Date.now() - new Date(st.lastCollected).getTime() > DAY) {
@@ -483,6 +576,7 @@ const server = http.createServer(async (req, res) => {
       const errors = validateProduct(body);
       if (errors.length) return send(res, 400, { error: "invalid product", errors });
       fs.writeFileSync(productPath(id), JSON.stringify(body, null, 2) + "\n");
+      clearProductCache(id);
       return send(res, 200, { ok: true, product: body });
     }
     if (m && req.method === "DELETE") {
@@ -490,6 +584,7 @@ const server = http.createServer(async (req, res) => {
       if (!fs.existsSync(productPath(id))) return send(res, 404, { error: "not found" });
       fs.unlinkSync(productPath(id));
       fs.rmSync(path.join(SECRETS_DIR, id), { recursive: true, force: true });
+      clearProductCache(id);
       return send(res, 200, { ok: true });
     }
 
@@ -651,7 +746,7 @@ const server = http.createServer(async (req, res) => {
         if (what === "stores")
           return send(res, 200, await cached("stores:" + id, 600000, refresh, () => storeStatus(id, prodCfg)));
         if (what === "reviews")
-          return send(res, 200, await cached("reviews:" + id, 3600000, refresh, () => ascReviews(id, prodCfg)));
+          return send(res, 200, await cached("reviews:" + id, 3600000, refresh, () => reviewsStatus(id, prodCfg)));
         if (what === "kpis")
           return send(res, 200, await cached("kpis:" + id, 600000, refresh, () => rcKpis(id, prodCfg)));
         if (what === "workflows") {
@@ -754,6 +849,7 @@ const server = http.createServer(async (req, res) => {
       const file = path.join(dir, name);
       fs.writeFileSync(file, body.value, { mode: 0o600 });
       fs.chmodSync(file, 0o600);
+      clearProductCache(id);
       return send(res, 200, { ok: true });
     }
 
